@@ -7,6 +7,7 @@
   python scripts/run_pipeline.py --stages all --tiny      # 冒烟验证全流程（数分钟）
   python scripts/run_pipeline.py --stages decoder --force # 强制重训解码器
   python scripts/run_pipeline.py --stages all --decoder-ablation  # 额外训练消融对照并评测
+  python scripts/run_pipeline.py --stages ddpm --ddpm-epochs 300  # 加长训练（自动续训）
 
 阶段:
   ddpm    预训练基础 DDPM            -> checkpoints/ddpm_cifar.pt
@@ -17,8 +18,13 @@
   p2      步数不对称网格+失配曲线    -> results/steps_grid.md, step_mismatch.md
   p3      再生攻击网格+鲁棒性前沿    -> results/regen.md, frontier.md
 
-特性: 已完成阶段自动跳过（--force 重跑）; 每阶段日志写入 results/logs/;
-     结束生成 results/pipeline_summary.md; 任一阶段失败立即终止。
+特性:
+  - **解释器自适应**：若当前解释器没有 torch，自动切换到检测到的可用 conda 环境
+    （可用 --python 显式指定），避免 `python` 指向无 torch 的 base 环境时直接失败；
+  - 已完成阶段自动跳过（--force 重跑）；ddpm 阶段按 checkpoint 里的 epoch 数
+    自动续训（train_ddpm.py 的 <out>.last.pt 断点）；
+  - 每阶段日志写入 results/logs/；结束生成 results/pipeline_summary.md；
+    任一阶段失败立即终止。
 """
 
 import argparse
@@ -30,6 +36,49 @@ import time
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STAGE_ORDER = ["ddpm", "decoder", "robust", "p1", "p2", "p3"]
 
+# 常见 conda 环境候选：本机 `python` 可能是没有 torch 的 base
+_CONDA_ROOTS = [
+    os.path.expandvars(r"%USERPROFILE%\anaconda3\envs"),
+    os.path.expandvars(r"%USERPROFILE%\miniconda3\envs"),
+    r"D:\anaconda3\envs",
+    os.path.expanduser("~/anaconda3/envs"),
+    os.path.expanduser("~/miniconda3/envs"),
+]
+_ENV_NAMES = ["krd-steg", "yolo", "diffusion", "krd"]
+
+
+def _has_torch(py: str) -> bool:
+    try:
+        r = subprocess.run([py, "-c", "import torch"], capture_output=True, timeout=300)
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def pick_python(explicit: str | None = None) -> str:
+    """选出能 import torch 的解释器：显式指定 > 当前 > 常见 conda 环境。"""
+    if explicit:
+        if not _has_torch(explicit):
+            raise SystemExit(f"[pipeline] --python 指定的解释器无法 import torch: {explicit}")
+        return explicit
+    if _has_torch(sys.executable):
+        return sys.executable
+    print(f"[pipeline] 当前解释器无 torch: {sys.executable}\n"
+          f"[pipeline] 正在搜索可用的 conda 环境 ...", flush=True)
+    py_name = "python.exe" if os.name == "nt" else "bin/python"
+    for root in _CONDA_ROOTS:
+        if not os.path.isdir(root):
+            continue
+        # 先试约定名字，再兜底扫全部环境
+        names = list(_ENV_NAMES) + [n for n in sorted(os.listdir(root))
+                                    if n not in _ENV_NAMES]
+        for name in names:
+            py = os.path.join(root, name, py_name)
+            if os.path.exists(py) and _has_torch(py):
+                print(f"[pipeline] 使用解释器: {py}", flush=True)
+                return py
+    raise SystemExit("[pipeline] 找不到带 torch 的解释器, 请用 --python 指定")
+
 
 def _force_tolerant_stdio():
     for stream in (sys.stdout, sys.stderr):
@@ -39,16 +88,34 @@ def _force_tolerant_stdio():
             pass
 
 
-def sh(script: str, args: list[str], log_path: str) -> None:
+def probe_mp_ok() -> bool:
+    """探测当前环境能否用 multiprocessing 队列（DataLoader num_workers>0 依赖它）。
+
+    受限沙箱/部分 Windows 环境下 `Pipe()` 会抛 PermissionError(WinError 5)，
+    此时必须回退到 num_workers=0，否则训练脚本在 DataLoader 构造阶段就直接失败。
+    """
+    try:
+        import multiprocessing as mp
+        ctx = mp.get_context("spawn")
+        q = ctx.Queue()
+        q.close()
+        q.join_thread()
+        return True
+    except Exception as e:
+        print(f"[pipeline] 多进程队列不可用（{type(e).__name__}: {e}）→ 回退 num_workers=0")
+        return False
+
+
+def sh(python: str, script: str, args: list[str], log_path: str) -> None:
     """运行仓库内脚本，输出实时回显并写日志。失败即终止。
 
     子进程强制 PYTHONUTF8=1：否则 Windows 下子进程按 GBK 写管道，与父进程的
     UTF-8 解码不一致会导致日志乱码。
     """
-    cmd = [sys.executable, os.path.join("scripts", script)] + args
+    cmd = [python, os.path.join("scripts", script)] + args
     print(f"    $ {' '.join(cmd[1:])}")
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
-    env = {**os.environ, "PYTHONUTF8": "1"}
+    env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
     with open(log_path, "w", encoding="utf-8", errors="replace") as log:
         proc = subprocess.Popen(cmd, cwd=BASE, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True,
@@ -61,6 +128,18 @@ def sh(script: str, args: list[str], log_path: str) -> None:
         code = proc.wait()
     if code != 0:
         raise SystemExit(f"\n[pipeline] stage failed (exit {code}), log: {log_path}")
+
+
+def _ddpm_epochs_done(ckpt: str) -> int:
+    """读取 checkpoint 里已完成的 epoch 数（读不到则视为 0）。"""
+    if not os.path.exists(ckpt):
+        return 0
+    try:
+        import torch
+        st = torch.load(ckpt, map_location="cpu", weights_only=False)
+        return int(st.get("epochs_done", st.get("epoch", 0)) or 0)
+    except Exception:
+        return 0
 
 
 def main():
@@ -78,6 +157,20 @@ def main():
     # 训练
     ap.add_argument("--ddpm-epochs", type=int, default=60)
     ap.add_argument("--ddpm-batch", type=int, default=128)
+    ap.add_argument("--ddpm-lr", type=float, default=2e-4)
+    ap.add_argument("--ddpm-base", type=int, default=64)
+    ap.add_argument("--ddpm-amp", choices=["auto", "on", "off"], default="off",
+                    help="DDPM 混合精度。默认 off：本 U-Net 在 fp16 下会溢出（实测 nan）")
+    ap.add_argument("--ddpm-grad-accum", type=int, default=1,
+                    help="梯度累积；等效 batch = ddpm-batch × grad-accum")
+    ap.add_argument("--ddpm-channels-last", action="store_true",
+                    help="channels_last 内存格式（部分显卡卷积更快）")
+    ap.add_argument("--cudnn-benchmark", action="store_true",
+                    help="开启 cudnn.benchmark（输入尺寸固定时更快）")
+    ap.add_argument("--ddpm-save-every", type=int, default=10,
+                    help="DDPM 每 N epoch 写一次断点（长时间训练用，支持中断续训）")
+    ap.add_argument("--python", default=None,
+                    help="显式指定解释器（默认自动挑选带 torch 的环境）")
     ap.add_argument("--decoder-steps", type=int, default=1000)
     ap.add_argument("--decoder-batch", type=int, default=16)
     ap.add_argument("--sched-noise-prob", type=float, default=0.3,
@@ -130,6 +223,8 @@ def main():
     os.makedirs(args.results_dir, exist_ok=True)
     log_dir = os.path.join(args.results_dir, "logs")
 
+    python = pick_python(args.python)
+
     stages = STAGE_ORDER if "all" in args.stages else [s for s in STAGE_ORDER
                                                        if s in args.stages]
     if not stages:
@@ -137,6 +232,7 @@ def main():
     print(f"[pipeline] 阶段: {' -> '.join(stages)}  "
           f"(ckpt={args.ckpt_dir}, results={args.results_dir}"
           f"{', tiny' if args.tiny else ''})")
+    print(f"[pipeline] python={python}")
 
     ddpm_ckpt = os.path.join(args.ckpt_dir, "ddpm_cifar.pt")
     summary: list[tuple[str, str, float, str]] = []
@@ -149,7 +245,7 @@ def main():
             return "skip"
         print(f"[{name}] 开始 ...")
         t0 = time.time()
-        sh(script, script_args, os.path.join(log_dir, f"{name}.log"))
+        sh(python, script, script_args, os.path.join(log_dir, f"{name}.log"))
         dt = time.time() - t0
         print(f"[{name}] 完成, 用时 {dt / 60:.1f} min")
         summary.append((name, "done", dt, " ".join(script_args)))
@@ -164,13 +260,28 @@ def main():
     # ---------------- 各阶段 ----------------
 
     if "ddpm" in stages:
+        # 关键：只有当已完成 epoch 数 >= 目标时才跳过。
+        # 否则（例如目标从 60 提到 300）继续训练，train_ddpm.py 会自动从 .last.pt 续训。
+        done_ep = _ddpm_epochs_done(ddpm_ckpt)
+        need_more = done_ep < args.ddpm_epochs
+        if need_more:
+            print(f"[ddpm] checkpoint 已完成 {done_ep} epoch < 目标 {args.ddpm_epochs}，"
+                  f"继续训练（会自动断点续训）")
         run_stage("ddpm", "train_ddpm.py",
                   ["--data-root", args.data_root, "--out", ddpm_ckpt,
-                   "--epochs", str(args.ddpm_epochs), "--batch-size", str(args.ddpm_batch)]
+                   "--epochs", str(args.ddpm_epochs),
+                   "--batch-size", str(args.ddpm_batch),
+                   "--lr", str(args.ddpm_lr),
+                   "--base", str(args.ddpm_base),
+                   "--amp", str(args.ddpm_amp),
+                   "--grad-accum", str(args.ddpm_grad_accum),
+                   "--save-every", str(args.ddpm_save_every)]
+                  + (["--channels-last"] if args.ddpm_channels_last else [])
+                  + (["--cudnn-benchmark"] if args.cudnn_benchmark else [])
                   + (["--tiny"] if args.tiny else []),
-                  done_marker=ddpm_ckpt)
+                  done_marker=None if need_more else ddpm_ckpt)
         if not os.path.exists(ddpm_ckpt):
-            raise SystemExit("[pipeline] ddpm 阶段被跳过但 checkpoint 不存在")
+            raise SystemExit("[pipeline] ddpm 阶段结束但 checkpoint 不存在")
 
     def train_decoder(tag: str, prob: float):
         out = os.path.join(args.ckpt_dir,
@@ -271,6 +382,9 @@ def main():
     with open(summary_path, "w", encoding="utf-8") as f:
         f.write("# 流水线运行汇总\n\n"
                 f"- 阶段: {' -> '.join(stages)}\n- tiny: {args.tiny}\n"
+                f"- 解释器: `{python}`\n"
+                f"- DDPM 目标 epoch: {args.ddpm_epochs}（当前 checkpoint 已完成 "
+                f"{_ddpm_epochs_done(ddpm_ckpt)}）\n"
                 f"- nonce 协议: `H(key || nonce-start+i)`（自包含, 不依赖 cover）, "
                 f"nonce-start={args.nonce_start}\n"
                 f"- 几何攻击: 真裁剪/旋转/缩放/平移（crop 不再是 torch.roll 循环平移）\n"

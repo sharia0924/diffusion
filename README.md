@@ -8,7 +8,8 @@
 - **鲁棒性**：解码器在可微 JPEG / 噪声 / 模糊 / 缩放 / **几何失真**下训练。
 
 完整方案（文献综述、可行性、赛道性价比、实验计划）见 [PROPOSAL.md](PROPOSAL.md)；
-当前问题的诊断与下一步路线见 [NEXT_STEPS.md](NEXT_STEPS.md)。
+当前问题的诊断与下一步路线见 [NEXT_STEPS.md](NEXT_STEPS.md)；
+**最近一次重训结果的分析见 [RESULTS_ANALYSIS_v2_retrain.md](RESULTS_ANALYSIS_v2_retrain.md)**。
 
 ## v2 评测口径修复（务必先读）
 
