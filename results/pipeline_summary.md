@@ -1,0 +1,15 @@
+# 流水线运行汇总
+
+- 阶段: ddpm -> decoder -> robust -> p1 -> p2 -> p3
+- tiny: False
+
+| 阶段 | 状态 | 用时(min) | 命令 |
+|---|---|---|---|
+| ddpm | done | 111.8 | `--data-root ./data --out D:\homework\face recognition\deeplearning\diffusion\checkpoints\ddpm_cifar.pt --epochs 60 --batch-size 128` |
+| decoder[main] | done | 43.9 | `--ddpm-ckpt D:\homework\face recognition\deeplearning\diffusion\checkpoints\ddpm_cifar.pt --out D:\homework\face recognition\deeplearning\diffusion\checkpoints\decoder.pt --data-root ./data --steps 1000 --batch-size 16 --sched-noise-prob 0.3 --hide-steps 50 --rec-steps 50` |
+| robust[main] | done | 1.2 | `--ddpm-ckpt D:\homework\face recognition\deeplearning\diffusion\checkpoints\ddpm_cifar.pt --data-root ./data --decoder-ckpt D:\homework\face recognition\deeplearning\diffusion\checkpoints\decoder_best.pt --out D:\homework\face recognition\deeplearning\diffusion\results\robustness.md --n 64 --batch 16 --hide-steps 50 --rec-steps 50 --strength 1.0 --regen-t 400` |
+| p1 | done | 0.7 | `--ddpm-ckpt D:\homework\face recognition\deeplearning\diffusion\checkpoints\ddpm_cifar.pt --data-root ./data --decoder-ckpt D:\homework\face recognition\deeplearning\diffusion\checkpoints\decoder_best.pt --out D:\homework\face recognition\deeplearning\diffusion\results\key_security.md --n 32 --batch 16 --n-wrong 200 --hide-steps 50 --rec-steps 50 --strength 1.0` |
+| p2-grid | done | 1.1 | `--ddpm-ckpt D:\homework\face recognition\deeplearning\diffusion\checkpoints\ddpm_cifar.pt --data-root ./data --decoder-ckpt D:\homework\face recognition\deeplearning\diffusion\checkpoints\decoder_best.pt --out D:\homework\face recognition\deeplearning\diffusion\results\steps_grid.md --n 24 --batch 16 --hide-list 10,25,50,100 --rec-list 10,25,50,100 --strength 1.0` |
+| p2-mismatch | done | 0.7 | `--ddpm-ckpt D:\homework\face recognition\deeplearning\diffusion\checkpoints\ddpm_cifar.pt --data-root ./data --decoder-ckpt D:\homework\face recognition\deeplearning\diffusion\checkpoints\decoder_best.pt --out D:\homework\face recognition\deeplearning\diffusion\results\step_mismatch.md --n 24 --batch 16 --rec-list 20,30,40,45,50,55,60,70,80 --hide-steps 50 --strength 1.0` |
+| p3-regen[main] | done | 0.6 | `--ddpm-ckpt D:\homework\face recognition\deeplearning\diffusion\checkpoints\ddpm_cifar.pt --data-root ./data --decoder-ckpt D:\homework\face recognition\deeplearning\diffusion\checkpoints\decoder_best.pt --out D:\homework\face recognition\deeplearning\diffusion\results\regen.md --n 32 --batch 16 --rec-steps 50 --t-regs 200,400,600,800 --regen-steps-list 25,50 --hide-steps 50 --strength 1.0` |
+| p3-frontier | done | 1.2 | `--ddpm-ckpt D:\homework\face recognition\deeplearning\diffusion\checkpoints\ddpm_cifar.pt --data-root ./data --decoder-ckpt D:\homework\face recognition\deeplearning\diffusion\checkpoints\decoder_best.pt --out D:\homework\face recognition\deeplearning\diffusion\results\frontier.md --n 32 --batch 16 --rec-steps 50 --hide-steps 50 --strengths 0.5,0.75,1.0,1.25,1.5,2.0` |

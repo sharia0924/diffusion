@@ -1,0 +1,88 @@
+{
+  "n": 4,
+  "device": "cpu",
+  "hide_steps": 50,
+  "rec_steps": 50,
+  "n_pairs": 160,
+  "total_bits": 80,
+  "ddim_roundtrip_psnr": 17.366915192714835,
+  "ddim_roundtrip_ssim": 0.6114885210990906,
+  "xT_total_energy": 2.616927146911621,
+  "A0_median": 0.8111621141433716,
+  "A0_over_rms": 0.8685052990913391,
+  "ring_energy_share": 0.3574325144290924,
+  "rows": [
+    {
+      "variant": "replace",
+      "strength": 0.5,
+      "rel_perturb_energy": 0.5041417479515076,
+      "psnr": 14.361479652530553,
+      "ssim": 0.28647854924201965,
+      "mf_clean": 1.0,
+      "mf_jpeg50": 0.96875,
+      "mf_cyclic2": 0.296875,
+      "mf_translate2": 0.328125,
+      "mf_crop2": 1.0
+    },
+    {
+      "variant": "replace",
+      "strength": 1.0,
+      "rel_perturb_energy": 0.7319411635398865,
+      "psnr": 9.483457637564007,
+      "ssim": 0.10096549987792969,
+      "mf_clean": 1.0,
+      "mf_jpeg50": 1.0,
+      "mf_cyclic2": 0.296875,
+      "mf_translate2": 0.3125,
+      "mf_crop2": 1.0
+    },
+    {
+      "variant": "delta",
+      "strength": 0.5,
+      "rel_perturb_energy": 0.09110916405916214,
+      "psnr": 12.556974207517161,
+      "ssim": 0.3053760826587677,
+      "mf_clean": 1.0,
+      "mf_jpeg50": 0.984375,
+      "mf_cyclic2": 0.453125,
+      "mf_translate2": 0.34375,
+      "mf_crop2": 1.0
+    },
+    {
+      "variant": "delta",
+      "strength": 1.0,
+      "rel_perturb_energy": 0.36443665623664856,
+      "psnr": 9.248071744412664,
+      "ssim": 0.11805347353219986,
+      "mf_clean": 1.0,
+      "mf_jpeg50": 1.0,
+      "mf_cyclic2": 0.390625,
+      "mf_translate2": 0.421875,
+      "mf_crop2": 1.0
+    },
+    {
+      "variant": "ratio",
+      "strength": 0.5,
+      "rel_perturb_energy": 0.10636895149946213,
+      "psnr": 14.940433309657248,
+      "ssim": 0.4613161087036133,
+      "mf_clean": 0.4375,
+      "mf_jpeg50": 0.421875,
+      "mf_cyclic2": 0.578125,
+      "mf_translate2": 0.4375,
+      "mf_crop2": 0.4375
+    },
+    {
+      "variant": "ratio",
+      "strength": 1.0,
+      "rel_perturb_energy": 0.4254758059978485,
+      "psnr": 11.74248156717683,
+      "ssim": 0.2582864761352539,
+      "mf_clean": 0.484375,
+      "mf_jpeg50": 0.5,
+      "mf_cyclic2": 0.546875,
+      "mf_translate2": 0.46875,
+      "mf_crop2": 0.484375
+    }
+  ]
+}

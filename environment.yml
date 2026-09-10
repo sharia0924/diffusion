@@ -1,0 +1,38 @@
+# =============================================================================
+# KRD-Steg conda environment (aligned with the verified dev setup).
+# NOTE: keep this file ASCII-only -- conda on Windows reads it with the
+#       system locale encoding (GBK on zh-CN) and crashes on UTF-8 comments.
+#
+#   create:  conda env create -f environment.yml
+#   activate: conda activate krd-steg
+#   verify:  python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+#            python tests/smoke_test.py
+#
+# GPU variants: change the extra-index-url and the +cuXXX suffix below
+#   options: cu118 / cu121 / cu124 / cu126 (driver >= 525 runs any CUDA 12.x)
+# CPU variant: drop the extra-index-url line and use
+#       - --index-url https://download.pytorch.org/whl/cpu
+#       - torch==2.9.1+cpu
+#       - torchvision==0.24.1+cpu
+# =============================================================================
+
+name: krd-steg
+
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.10
+  - pip>=24
+
+  - pip:
+      # ---- PyTorch (CUDA 12.6 wheel) ----
+      - --extra-index-url https://download.pytorch.org/whl/cu126
+      - torch==2.9.1+cu126
+      - torchvision==0.24.1+cu126
+
+      # ---- the rest ----
+      - numpy>=1.24,<2          # matches the verified env; numpy 2.x also works with torch>=2.4
+      - pillow>=10
+      - tqdm>=4.60
+      - matplotlib>=3.7         # steps_grid heatmaps / frontier plots

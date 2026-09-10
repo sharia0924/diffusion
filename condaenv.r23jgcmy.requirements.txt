@@ -1,0 +1,7 @@
+--extra-index-url https://download.pytorch.org/whl/cu126
+torch==2.9.1+cu126
+torchvision==0.24.1+cu126
+numpy>=1.24,<2
+pillow>=10
+tqdm>=4.60
+matplotlib>=3.7

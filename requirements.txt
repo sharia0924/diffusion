@@ -1,0 +1,15 @@
+# KRD-Steg dependencies (plain pip; conda users: prefer environment.yml).
+# NOTE: keep this file ASCII-only -- pip on Windows may read it with the
+#       system locale encoding (GBK on zh-CN).
+#
+# GPU (CUDA 12.6):
+#   pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu126
+# CPU:
+#   pip install -r requirements.txt --index-url https://download.pytorch.org/whl/cpu
+
+torch>=2.0
+torchvision>=0.15
+numpy>=1.24
+pillow>=10
+tqdm>=4.60
+matplotlib>=3.7

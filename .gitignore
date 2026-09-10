@@ -1,0 +1,29 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# ---- 本项目的大文件 / 生成物 ----
+# 训练产物与数据集不入库（体积大、可复现）
+checkpoints/
+checkpoints_tiny/
+data/
+*.pt
+*.pth
+
+# 评测中间产物：日志与图保留，但下面是环境相关的
+results/logs/
+scripts/results/logs/
+
+# ---- IDE / 系统 ----
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# ---- 临时文件 ----
+_tmp_*.py
+*.tmp
