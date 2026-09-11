@@ -1,13 +1,13 @@
 {
-  "space": "空间=隐空间 (4, 8, 8)，VAE=VAE[native] ch=4 down=4x (2^2) scale=1.00000 src=D:\\homework\\face recognition\\deeplearning\\diffusion\\checkpoints_tiny_ldm\\vae32.pt",
+  "space": "空间=隐空间 (4, 8, 8)，VAE=VAE[native] ch=4 down=4x (2^2) scale=1.00000 src=D:\\homework\\face recognition\\deeplearning\\diffusion\\checkpoints\\vae32.pt",
   "n": 4,
   "n_bits": 4,
   "pixel_baseline": false,
   "rows": [
     {
       "strength": 0.02,
-      "psnr": 14.266354882571575,
-      "ssim": 0.24011175334453583,
+      "psnr": 14.266357043050494,
+      "ssim": 0.24011194705963135,
       "lpips": null,
       "dec_clean": 0.4375,
       "dec_jpeg50": 0.4375,
@@ -15,8 +15,8 @@
     },
     {
       "strength": 0.05,
-      "psnr": 13.624250903861771,
-      "ssim": 0.20891422033309937,
+      "psnr": 13.624247922193247,
+      "ssim": 0.20891425013542175,
       "lpips": null,
       "dec_clean": 0.4375,
       "dec_jpeg50": 0.4375,
@@ -24,8 +24,8 @@
     },
     {
       "strength": 0.1,
-      "psnr": 12.299033937898582,
-      "ssim": 0.15091946721076965,
+      "psnr": 12.299032289740007,
+      "ssim": 0.15091940760612488,
       "lpips": null,
       "dec_clean": 0.4375,
       "dec_jpeg50": 0.4375,
@@ -34,7 +34,7 @@
     {
       "strength": 0.3,
       "psnr": 9.517634743311275,
-      "ssim": 0.08259537816047668,
+      "ssim": 0.08259540796279907,
       "lpips": null,
       "dec_clean": 0.4375,
       "dec_jpeg50": 0.4375,

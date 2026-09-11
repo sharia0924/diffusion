@@ -1,7 +1,7 @@
 # 密钥安全性评测（P1）
 
 - 样本数 n=4, S_hide=25, S_rec=25, strength=0.4
-- 空间=隐空间 (4, 8, 8)，VAE=VAE[native] ch=4 down=4x (2^2) scale=1.00000 src=D:\homework\face recognition\deeplearning\diffusion\checkpoints_tiny_ldm\vae32.pt
+- 空间=隐空间 (4, 8, 8)，VAE=VAE[native] ch=4 down=4x (2^2) scale=1.00000 src=D:\homework\face recognition\deeplearning\diffusion\checkpoints\vae32.pt
 - 载密图基线: PSNR 9.74 dB / SSIM 0.0976 / LPIPS n/a
 - nonce 协议: `nonce_i = H(key || nonce_start+i)`（自包含, 不依赖 cover）
 
@@ -32,9 +32,9 @@
 
 | N | 无 nonce 协议 | 逐图 nonce（ours） |
 |---|---|---|
-| 1 | 0.794 | 0.807 |
-| 2 | 0.880 | 0.790 |
-| 4 | 0.962 | 0.728 |
+| 1 | 0.795 | 0.807 |
+| 2 | 0.888 | 0.793 |
+| 4 | 0.963 | 0.726 |
 
 ## E. 盲水印检测 AUC（隐写分析视角：只给图，能否区分载密图 vs 原图）
 

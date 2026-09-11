@@ -1,6 +1,0 @@
-  [vae] VAE[native] ch=4 down=4x (2^2) scale=1.00000 src=D:\homework\face recognition\deeplearning\diffusion\checkpoints_tiny_ldm\vae32.pt
-Files already downloaded and verified
-[space] 空间=隐空间 (4, 8, 8)，VAE=VAE[native] ch=4 down=4x (2^2) scale=1.00000 src=D:\homework\face recognition\deeplearning\diffusion\checkpoints_tiny_ldm\vae32.pt  pixel_res=32
-stego 基线: PSNR(vs cover) 10.80 dB / SSIM 0.0969
-regen t=400 steps=25: cost(vs cover) 10.30 dB | vs stego 26.23 dB | LPIPS n/a | BER 0.375
-saved -> D:\homework\face recognition\deeplearning\diffusion\results_tiny_ldm\regen_l32.md, D:\homework\face recognition\deeplearning\diffusion\results_tiny_ldm\regen_l32.csv

@@ -1,7 +1,7 @@
 # KRD-Steg 鲁棒性评测
 
 - 样本数 n=4, 隐藏步数=25, 复原步数=25, 容量=4 bits, strength=0.4
-- 空间=隐空间 (4, 8, 8)，VAE=VAE[native] ch=4 down=4x (2^2) scale=1.00000 src=D:\homework\face recognition\deeplearning\diffusion\checkpoints_tiny_ldm\vae32.pt
+- 空间=隐空间 (4, 8, 8)，VAE=VAE[native] ch=4 down=4x (2^2) scale=1.00000 src=D:\homework\face recognition\deeplearning\diffusion\checkpoints\vae32.pt
 - nonce 协议: `nonce_i = H(key || nonce_start+i)`（自包含, 不依赖 cover）, nonce_start=0
 - **VAE 往返上限（无嵌入）: PSNR 16.96 dB** —— 这是整条链路的天花板
 - 容量报告: {'z_shape': (4, 8, 8), 'avail_bins_single_channel': 14, 'avail_pairs_all_channels': 56, 'r_min': 1, 'r_max': 3, 'slots': 4, 'obs_per_bit_ceiling': 14.0}

@@ -1,8 +1,0 @@
-  [vae] VAE[native] ch=4 down=4x (2^2) scale=1.00000 src=D:\homework\face recognition\deeplearning\diffusion\checkpoints_tiny_ldm\vae32.pt
-Files already downloaded and verified
-[space] 空间=隐空间 (4, 8, 8)，VAE=VAE[native] ch=4 down=4x (2^2) scale=1.00000 src=D:\homework\face recognition\deeplearning\diffusion\checkpoints_tiny_ldm\vae32.pt  pixel_res=32
-stego PSNR 9.86 dB; decoder trained @ S_rec=25
-S_rec=4: clean 0.750 | jpeg50 0.500
-S_rec=10: clean 0.625 | jpeg50 0.438
-S_rec=25: clean 0.625 | jpeg50 0.375
-saved -> D:\homework\face recognition\deeplearning\diffusion\results_tiny_ldm\step_mismatch_l32.md

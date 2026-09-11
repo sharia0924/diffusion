@@ -11,12 +11,12 @@ far_tau8,1.000000
 far_tau12,1.000000
 resid_corr_mean_no_nonce,0.2462
 resid_corr_mean_nonce,0.1214
-slot_auc_no_nonce_N1,0.7937
+slot_auc_no_nonce_N1,0.7950
 slot_auc_nonce_N1,0.8069
-slot_auc_no_nonce_N2,0.8796
-slot_auc_nonce_N2,0.7903
-slot_auc_no_nonce_N4,0.9616
-slot_auc_nonce_N4,0.7284
+slot_auc_no_nonce_N2,0.8876
+slot_auc_nonce_N2,0.7930
+slot_auc_no_nonce_N4,0.9630
+slot_auc_nonce_N4,0.7255
 presence_auc_no_nonce,1.0000
 presence_auc_nonce,1.0000
 log2_param_space,102.51

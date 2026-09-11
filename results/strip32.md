@@ -1,6 +1,6 @@
 # strength 扫描（载密图质量 vs 准确率）
 
-- 空间: 空间=隐空间 (4, 8, 8)，VAE=VAE[native] ch=4 down=4x (2^2) scale=1.00000 src=D:\homework\face recognition\deeplearning\diffusion\checkpoints_tiny_ldm\vae32.pt，pixel_res=32
+- 空间: 空间=隐空间 (4, 8, 8)，VAE=VAE[native] ch=4 down=4x (2^2) scale=1.00000 src=D:\homework\face recognition\deeplearning\diffusion\checkpoints\vae32.pt，pixel_res=32
 - 无嵌入往返上限: PSNR **16.96 dB**
 - 容量: {'z_shape': (4, 8, 8), 'avail_bins_single_channel': 14, 'avail_pairs_all_channels': 56, 'r_min': 1, 'r_max': 3, 'slots': 12, 'obs_per_bit_ceiling': 4.666666666666667}
 - 样本 n=4, S_hide=25, S_rec=25

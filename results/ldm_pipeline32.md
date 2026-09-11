@@ -1,6 +1,6 @@
 # LDM 迁移端到端验证
 
-- 空间: 空间=隐空间 (4, 8, 8)，VAE=VAE[native] ch=4 down=4x (2^2) scale=1.00000 src=D:\homework\face recognition\deeplearning\diffusion\checkpoints_tiny_ldm\vae32.pt
+- 空间: 空间=隐空间 (4, 8, 8)，VAE=VAE[native] ch=4 down=4x (2^2) scale=1.00000 src=D:\homework\face recognition\deeplearning\diffusion\checkpoints\vae32.pt
 - 样本数: 4, 容量 4 bits, S_hide=25, S_rec=25
 - **VAE 往返上限（无嵌入）: PSNR 16.96 dB**
 - 容量报告: `{'z_shape': (4, 8, 8), 'avail_bins_single_channel': 14, 'avail_pairs_all_channels': 56, 'r_min': 1, 'r_max': 3, 'slots': 4, 'obs_per_bit_ceiling': 14.0}`

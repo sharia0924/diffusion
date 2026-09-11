@@ -92,12 +92,28 @@ def main():
     start_epoch = 0
     if os.path.exists(resume_path):
         st = torch.load(resume_path, map_location=device, weights_only=False)
-        if int(st.get("epoch", 0)) < args.epochs:
+        # **架构校验**：断点必须与当前参数同构，否则 load_state_dict 会因形状不匹配崩溃。
+        # 典型场景：先用 --tiny（base=16/downsample=2）试跑过，之后再用正式参数训练，
+        # 残留的 .last.pt 会直接把正式训练打挂。
+        pa = st.get("args", {})
+        mism = []
+        for k, cur in (("base", args.base), ("z_ch", args.z_ch),
+                       ("downsample", args.downsample), ("ch_mults", args.ch_mults)):
+            old = pa.get(k)
+            if old is not None and str(old) != str(cur):
+                mism.append(f"{k}: 断点={old} 当前={cur}")
+        if mism:
+            print(f"[resume][跳过] {resume_path} 的架构与当前参数不一致，"
+                  f"将从第 0 epoch 重新训练：\n    " + "\n    ".join(mism), flush=True)
+        elif int(st.get("epoch", 0)) < args.epochs:
             model.load_state_dict(st["model"])
             if "opt" in st:
                 opt.load_state_dict(st["opt"])
             start_epoch = int(st["epoch"])
             print(f"[resume] 从 {resume_path} 恢复: 已完成 {start_epoch} epoch", flush=True)
+        else:
+            print(f"[resume] {resume_path} 已完成 {st.get('epoch')} >= {args.epochs} epoch，"
+                  f"无需训练", flush=True)
 
     def save_state(ep: int):
         os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)

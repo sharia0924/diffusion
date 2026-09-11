@@ -1,9 +1,0 @@
-  [vae] VAE[native] ch=4 down=4x (2^2) scale=1.00000 src=D:\homework\face recognition\deeplearning\diffusion\checkpoints_tiny_ldm\vae32.pt
-Files already downloaded and verified
-[space] 空间=隐空间 (4, 8, 8)，VAE=VAE[native] ch=4 down=4x (2^2) scale=1.00000 src=D:\homework\face recognition\deeplearning\diffusion\checkpoints_tiny_ldm\vae32.pt  pixel_res=32
-loaded decoder from D:\homework\face recognition\deeplearning\diffusion\checkpoints_tiny_ldm\decoder_latent32_best.pt
-slot AUC N=1: no-nonce 0.794 | per-image nonce 0.807
-slot AUC N=2: no-nonce 0.880 | per-image nonce 0.790
-slot AUC N=4: no-nonce 0.962 | per-image nonce 0.728
-presence AUC: no-nonce 1.000 | nonce 1.000
-saved -> D:\homework\face recognition\deeplearning\diffusion\results_tiny_ldm\key_security_l32.md

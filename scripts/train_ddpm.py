@@ -193,7 +193,18 @@ def main():
     if os.path.exists(resume_path) and not args.no_resume:
         st = torch.load(resume_path, map_location=device, weights_only=False)
         done = int(st.get("epoch", 0))
-        if done < args.epochs:
+        # **架构校验**：断点必须与当前参数同构，否则 load_state_dict 会因形状不匹配崩溃
+        # （典型场景：先用 --tiny 试跑过，之后用正式参数训练时残留 .last.pt 直接把训练打挂）。
+        pa = st.get("args", {})
+        mism = []
+        for k in ("base", "in_ch", "vae_backend", "vae_ckpt", "latent_shape", "resize"):
+            old, cur = pa.get(k), getattr(args, k, None)
+            if old is not None and str(old) != str(cur):
+                mism.append(f"{k}: 断点={old} 当前={cur}")
+        if mism:
+            print(f"[resume][跳过] {resume_path} 的配置与当前参数不一致，"
+                  f"将从第 0 epoch 重新训练：\n    " + "\n    ".join(mism), flush=True)
+        elif done < args.epochs:
             model.load_state_dict(st["model"])
             ema = {k: v.to(device) for k, v in st["ema"].items()}
             if "opt" in st:
