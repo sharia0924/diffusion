@@ -107,12 +107,49 @@ def check_bits(key: str, nonce: str, n: int = 32) -> torch.Tensor:
     return torch.from_numpy(bits.copy()).float()
 
 
+def _lin_index(bins: torch.Tensor, W: int) -> torch.Tensor:
+    """频点 (row, col) -> 展平后的线性下标，供 gather/scatter 使用。"""
+    b = bins.to(dtype=torch.long)
+    return b[:, 0] * W + b[:, 1]
+
+
+def _spec_take(F_: torch.Tensor, bins: torch.Tensor, W: int) -> torch.Tensor:
+    """F_ (C,H,W) 复数谱 -> 指定频点处的值 (C, n_pairs)。
+
+    用**扁平 gather** 而不是 `F_[:, rows, cols]` 高级索引：
+    后者在部分 PyTorch/CUDA 组合下会触发 IndexKernel 越界断言
+    （本机 torch 2.5.0+cu118 上，隐空间 4 通道输入必现；
+    像素空间 3 通道侥幸可用），且对批量输入会把三个索引解释到前三个维度上。
+    gather/scatter 的语义无歧义，且 CPU/CUDA 行为一致。
+    """
+    C = F_.shape[0]
+    idx = _lin_index(bins, W).to(F_.device).view(1, -1).expand(C, -1)
+    return F_.reshape(C, -1).gather(1, idx)
+
+
+def _spec_put(F_: torch.Tensor, bins: torch.Tensor, W: int, values: torch.Tensor) -> torch.Tensor:
+    """把 values (C, n_pairs) 散射回 F_ (C,H,W) 的指定频点（原地修改并返回）。"""
+    C = F_.shape[0]
+    idx = _lin_index(bins, W).to(F_.device).view(1, -1).expand(C, -1)
+    flat = F_.reshape(C, -1)
+    flat.scatter_(1, idx, values)
+    return F_.view(C, F_.shape[1], F_.shape[2])
+
+
 def inject_pattern(x_T: torch.Tensor, bits: torch.Tensor, params: dict,
-                   strength: float = 1.0) -> torch.Tensor:
+                   strength: float = 1.0, mode: str = "replace") -> torch.Tensor:
     """把 bits（长度 L_e, 取值 {0,1}）写入单张 x_T (C,H,W) 的频谱。
 
     L_e 组比特，每组占 g = n_pairs // L_e 个频点对；组内符号 = 2b-1。
-    图案幅度 = strength * 该通道环带中值幅度（数据自适应），strength 控制容量/质量的折中。
+
+    mode:
+      - "replace"（历史默认，向后兼容）：F[k] <- template * strength * median(|F[k]|)。
+        这是**破坏性**写法：它把选中频点的原始系数（含相位）整体覆盖。
+        实测在隐空间上只要 strength>0 就把载密图 PSNR 从 35 dB 打到 14.6 dB，
+        且 0.001~0.2 区间几乎不变 —— 说明损失来自"覆盖"而非幅度大小。
+      - "add"（推荐）：F[k] <- F[k] + d * s_j * e^{jφ_j}，d = strength * median(|F[k]|)。
+        保留原始系数与幅度结构，只叠加一个相对幅度为 strength 的图案，
+        载密图质量随 strength 平滑可控（这才是"隐写"该有的行为）。
     """
     L_e = int(bits.numel())
     bins = params["bins"].to(x_T.device)
@@ -128,14 +165,28 @@ def inject_pattern(x_T: torch.Tensor, bits: torch.Tensor, params: dict,
 
     C, H, W = x_T.shape
     F_ = torch.fft.fftshift(torch.fft.fft2(x_T, norm="ortho"), dim=(-2, -1))
-    ring_mag = F_[:, bins[:, 0], bins[:, 1]].abs()                     # (C, n_pairs)
+    ring_mag = _spec_take(F_, bins, W).abs()                           # (C, n_pairs)
     scale = strength * ring_mag.median(dim=1, keepdim=True).values     # (C, 1)
 
-    template = base_mag[None, :] * torch.exp(1j * phases)[None, :] * sign[None, :]
-    F_ = F_.clone()
-    F_[:, bins[:, 0], bins[:, 1]] = template * scale
-    my, mx = (-bins[:, 0]) % H, (-bins[:, 1]) % W                      # Hermitian 镜像
-    F_[:, my, mx] = torch.conj(template) * scale
+    # strength≈0 时必须**完全不写**：replace 模式下"照常替换"等于把选中频点置零，
+    # 破坏反而更大（实测 strength 从 0.3 降到 0.01，PSNR 卡在 14.5 dB 不上升）。
+    if float(scale.abs().max()) < 1e-12:
+        return x_T
+
+    if mode == "replace":
+        template = base_mag[None, :] * torch.exp(1j * phases)[None, :] * sign[None, :]
+        F_ = F_.clone()
+        _spec_put(F_, bins, W, template * scale)
+        mirror = torch.stack([(-bins[:, 0]) % H, (-bins[:, 1]) % W], dim=1)
+        _spec_put(F_, mirror, W, torch.conj(template) * scale)
+    elif mode == "add":
+        delta = scale * sign * torch.exp(1j * phases)[None, :]
+        F_ = F_.clone()
+        _spec_put(F_, bins, W, _spec_take(F_, bins, W) + delta)
+        mirror = torch.stack([(-bins[:, 0]) % H, (-bins[:, 1]) % W], dim=1)
+        _spec_put(F_, mirror, W, _spec_take(F_, mirror, W) + torch.conj(delta))
+    else:
+        raise ValueError(f"未知注入模式: {mode}（可选 replace/add）")
     return torch.fft.ifft2(torch.fft.ifftshift(F_, dim=(-2, -1)), norm="ortho").real
 
 
@@ -152,7 +203,7 @@ def ring_features(x_T: torch.Tensor, params: dict) -> torch.Tensor:
     bins = params["bins"].to(x_T.device)
     phases = params["phases"].to(x_T.device)
     F_ = torch.fft.fftshift(torch.fft.fft2(x_T, norm="ortho"), dim=(-2, -1))
-    vals = F_[:, bins[:, 0], bins[:, 1]]                               # (C, n_pairs) complex
+    vals = _spec_take(F_, bins, x_T.shape[-1])                         # (C, n_pairs) complex
     vals = vals * torch.exp(-1j * phases)[None, :]
     norm = vals.abs().median().clamp(min=1e-8)
     feats = torch.cat([vals.real.mean(0), vals.imag.mean(0)]) / norm

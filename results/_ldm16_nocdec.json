@@ -1,0 +1,29 @@
+{
+  "space": "空间=隐空间 (4, 16, 16)，VAE=VAE[native] ch=4 down=2x (2^1) scale=1.00000 src=checkpoints/vae16.last.pt",
+  "n": 4,
+  "n_bits": 16,
+  "pixel_baseline": false,
+  "rows": [
+    {
+      "strength": 1.0,
+      "psnr": 9.606246883428168,
+      "ssim": 0.16652223467826843,
+      "lpips": null,
+      "mf_clean": 1.0
+    }
+  ],
+  "vae_roundtrip_psnr": 38.30523443572224,
+  "capacity": {
+    "z_shape": [
+      4,
+      16,
+      16
+    ],
+    "avail_bins_single_channel": 70,
+    "avail_pairs_all_channels": 280,
+    "r_min": 2,
+    "r_max": 7,
+    "slots": 16,
+    "obs_per_bit_ceiling": 17.5
+  }
+}

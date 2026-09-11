@@ -17,7 +17,7 @@ from .pattern import ecc_collapse, ecc_encode, inject_pattern, ring_features
 class TrajStego:
     def __init__(self, model, schedule, n_bits: int = 16, ecc_reps: int = 3,
                  bins_per_bit: int = 2, res: int = 32, n_check_bits: int = 32,
-                 device="cpu"):
+                 inject_mode: str = "replace", device="cpu"):
         self.model = model.to(device).eval()
         for p in self.model.parameters():
             p.requires_grad_(False)
@@ -27,6 +27,8 @@ class TrajStego:
         self.bpb = bins_per_bit
         self.res = res
         self.n_check_bits = int(n_check_bits)
+        # 注入模式：replace = 历史行为（覆盖系数，破坏性）；add = 加性（保留系数结构）
+        self.inject_mode = inject_mode
         self.msg_embed_bits = n_bits * ecc_reps            # ECC 展开后的消息槽位
         self.total_embed_bits = self.msg_embed_bits + self.n_check_bits
         self.n_pairs = self.total_embed_bits * bins_per_bit
@@ -94,7 +96,7 @@ class TrajStego:
         for i in range(B):
             b_full = self.full_bits(bits[i], keys[i], nonces[i])
             x_T2.append(inject_pattern(x_T[i], b_full, self.params_for(keys[i], nonces[i]),
-                                       float(strength[i])))
+                                       float(strength[i]), mode=self.inject_mode))
         x_T2 = torch.stack(x_T2)
         return self.sched.ddim_sample(self.model, x_T2, hide_steps)
 

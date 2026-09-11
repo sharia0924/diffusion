@@ -1,4 +1,4 @@
-﻿"""LDM 链路冒烟测试：用随机权重的小 VAE + 小扩散模型验证端到端可运行性。
+"""LDM 链路冒烟测试：用随机权重的小 VAE + 小扩散模型验证端到端可运行性。
 
 不依赖任何训练结果，只验证"隐空间隐藏 -> 解码 -> 失真 -> 再编码 -> 复原"
 这条链路在代码层面是通的（形状、空间桥接、指标计算）。
@@ -99,7 +99,7 @@ def main():
     # 6) 容量报告：隐空间每比特观测数应远高于像素空间
     rep = io.capacity_report(4)
     print(f"    隐空间容量报告: {rep}")
-    check("容量报告可用", rep is not None and rep["obs_per_bit"] > 0)
+    check("容量报告可用", rep is not None and rep["obs_per_bit_ceiling"] > 0)
 
     # 7) 无嵌入往返上限（VAE 直通）
     rt = io.baseline_psnr(x)

@@ -1,22 +1,36 @@
 {
   "vae_ckpt": "checkpoints/vae16.last.pt",
-  "ddpm_ckpt": "checkpoints/ddpm_latent.last.pt",
-  "n": 8,
+  "ddpm_ckpt": "checkpoints/ddpm_latent.pt",
+  "n": 16,
   "latent_shape": [
     4,
     16,
     16
   ],
-  "vae_roundtrip_psnr": 37.244796678898005,
-  "vae_roundtrip_ssim": 0.9866988062858582,
+  "vae_roundtrip_psnr": 37.33521756861244,
+  "vae_roundtrip_ssim": 0.988257110118866,
   "ddim_rows": [
     {
+      "steps": 20,
+      "roundtrip_psnr": 29.70976046311142,
+      "roundtrip_ssim": 0.8988634347915649,
+      "latent_rel_mse": 0.021224732792477326,
+      "latent_psnr": 21.64314031600952
+    },
+    {
       "steps": 50,
-      "roundtrip_psnr": 33.55611359165927,
-      "roundtrip_ssim": 0.9390778541564941,
-      "latent_rel_mse": 0.0057751202138844986,
-      "latent_psnr": 26.080284118652344
+      "roundtrip_psnr": 35.12261252781373,
+      "roundtrip_ssim": 0.9661061763763428,
+      "latent_rel_mse": 0.002847395895376637,
+      "latent_psnr": 30.36708354949951
+    },
+    {
+      "steps": 100,
+      "roundtrip_psnr": 36.67832097739742,
+      "roundtrip_ssim": 0.9812406301498413,
+      "latent_rel_mse": 0.0007004422042675635,
+      "latent_psnr": 36.457839012145996
     }
   ],
-  "gap_db": 3.6886830872387364
+  "gap_db": 0.6568965912150233
 }

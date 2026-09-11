@@ -40,9 +40,53 @@ def build_unet_from_args(margs: dict, device: str, check_compat: bool = False) -
     return unet
 
 
+def auto_bins_per_bit(res: int, n_slots: int, requested: int = 2) -> int:
+    """按空间的实际频点预算决定每槽占用多少对频点。
+
+    容量 ∝ 分辨率²：像素 32² 单通道有 342 对，2 对/槽可放 160 对；
+    而 16×16 的 latent 单通道只有 70 对，若仍用 2 对/槽 需要 160 对 → 超出预算。
+    这里从 requested 向下找到第一个放得下的值（至少 1）。
+    """
+    from krd.pattern import ring_capacity
+    avail = ring_capacity(res)
+    for bpb in range(requested, 0, -1):
+        if n_slots * bpb <= avail:
+            if bpb != requested:
+                print(f"  [capacity] res={res} 单通道可用 {avail} 对，"
+                      f"bins_per_bit {requested} -> {bpb}（槽位 {n_slots}）")
+            return bpb
+    raise ValueError(f"res={res} 连每槽 1 对都放不下 {n_slots} 个槽位（可用 {avail} 对）")
+
+
+def fit_capacity(res: int, n_bits: int, ecc: int, n_check: int,
+                 requested_bpb: int = 2) -> tuple[int, int, int, int]:
+    """把 (n_bits, ecc, n_check, bpb) 调整到该分辨率的频点预算之内。
+
+    优先保持 n_bits 与 ecc，先降 bpb；仍放不下则缩减 n_check，最后才降 n_bits。
+    返回调整后的四元组，并在发生调整时打印说明。
+    （隐空间 16×16 的预算只有 70 对，而默认配置需要 160 对，
+      不做自适应会让评测脚本在没有解码器时直接崩掉。）
+    """
+    from krd.pattern import ring_capacity
+    avail = ring_capacity(res)
+    bpb, check = requested_bpb, n_check
+    bpb = min(bpb, max(1, avail // max(1, n_bits * ecc + check)))
+    while n_bits * ecc + check > avail // max(bpb, 1) and check > 0:
+        check -= 1
+    while n_bits > 1 and n_bits * ecc + check > avail // max(bpb, 1):
+        n_bits -= 1
+    slots = n_bits * ecc + check
+    if (n_bits, check, bpb) != (n_bits, n_check, requested_bpb):
+        print(f"  [capacity] res={res} 可用 {avail} 对 -> "
+              f"自适应为 n_bits={n_bits} ecc={ecc} check={check} bpb={bpb} "
+              f"(slots={slots}, pairs={slots * bpb})")
+    return n_bits, ecc, check, bpb
+
+
 def load_stego(ckpt_path: str, device: str, n_bits: int = 16, ecc_reps: int = 3,
                bins_per_bit: int = 2, n_check_bits: int = 32,
-               with_vae: bool = False, res: int | None = None) -> TrajStego:
+               with_vae: bool = False, res: int | None = None,
+               inject_mode: str | None = None) -> TrajStego:
     """加载 DDPM（可选 VAE）并构造 TrajStego。
 
     with_vae=True 且 checkpoint 是隐空间模型时，会一并加载 VAE 并挂到
@@ -59,9 +103,17 @@ def load_stego(ckpt_path: str, device: str, n_bits: int = 16, ecc_reps: int = 3,
     if _clip is None:
         _clip = (margs.get("vae_backend", "none") == "none")
     sched = Schedule(margs.get("timesteps", 1000), device=device, clip_denoised=bool(_clip))
+    # res（图案的频率网格尺寸）必须与模型实际空间一致，否则 bins 越界：
+    # 优先级 = 显式参数 > checkpoint 的 latent_res > latent_shape 的 H > 32（像素空间）
+    lshape = margs.get("latent_shape")
+    _res = res or margs.get("latent_res") or (lshape[1] if lshape else 32)
+    # 频点预算不足时自适应（像素空间 res=32 预算充足，参数不变）
+    n_bits, ecc_reps, n_check_bits, bins_per_bit = fit_capacity(
+        int(_res), n_bits, ecc_reps, n_check_bits, bins_per_bit)
     stego = TrajStego(unet, sched, n_bits=n_bits, ecc_reps=ecc_reps,
                       bins_per_bit=bins_per_bit, n_check_bits=n_check_bits,
-                      res=res or margs.get("latent_res", 32), device=device)
+                      res=int(_res), inject_mode=inject_mode or "replace",
+                      device=device)
     vae = None
     if with_vae:
         backend = margs.get("vae_backend", "none")
@@ -114,6 +166,16 @@ def main():
     ap.add_argument("--sched-noise-prob", type=float, default=0.0,
                     help=">0 时以该概率把失真换成调度坐标加噪（扩散再生攻击的训练代理）")
     ap.add_argument("--n-check-bits", type=int, default=32)
+    ap.add_argument("--n-bits", type=int, default=16,
+                    help="消息比特数（容量）；隐空间 16×16 频点预算有限时需下调")
+    ap.add_argument("--ecc-reps", type=int, default=3,
+                    help="重复码次数；槽位数 = n_bits×reps + n_check_bits")
+    ap.add_argument("--bins-per-bit", type=int, default=2,
+                    help="每槽占用的频点对数；超预算时会自动下调并打印提示")
+    ap.add_argument("--inject-mode", choices=["replace", "add"], default="add",
+                    help="频谱注入方式：add = 加性（保留原系数，质量随 strength 平滑变化，"
+                         "隐空间必备）；replace = 历史行为（覆盖系数，实测一加注入"
+                         "PSNR 就从 35dB 掉到 15dB）")
     ap.add_argument("--eval-size", type=int, default=128)
     ap.add_argument("--eval-every", type=int, default=500)
     ap.add_argument("--num-workers", type=int, default=-1,
@@ -130,10 +192,13 @@ def main():
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     # with_vae=True 仅对隐空间 checkpoint 生效（像素空间 checkpoint 的 vae_backend=none）
-    stego = load_stego(args.ddpm_ckpt, device, n_check_bits=args.n_check_bits,
-                       with_vae=True)
+    stego = load_stego(args.ddpm_ckpt, device, n_bits=args.n_bits, ecc_reps=args.ecc_reps,
+                       bins_per_bit=args.bins_per_bit, n_check_bits=args.n_check_bits,
+                       with_vae=True, inject_mode=args.inject_mode)
     if getattr(stego, "vae", None) is not None:
         print(f"[latent] 隐空间解码器训练: latent_shape={stego.latent_shape} "
+              f"容量={stego.n_bits}bit ecc={stego.ecc} bpb={stego.bpb} "
+              f"slots={stego.total_embed_bits} n_pairs={stego.n_pairs}"
               f"（失真在像素空间施加，再编码回隐空间）", flush=True)
     decoder = RingDecoder(2 * stego.n_pairs, stego.total_embed_bits).to(device)
     opt = torch.optim.AdamW(decoder.parameters(), lr=args.lr, weight_decay=1e-4)
@@ -202,7 +267,7 @@ def main():
               "res": stego.res, "n_check_bits": stego.n_check_bits,
               "n_pairs": stego.n_pairs, "hide_steps": args.hide_steps,
               "rec_steps": args.rec_steps, "nonce_protocol": "keyed-v2",
-              "geom_prob": args.geom_prob}
+              "geom_prob": args.geom_prob, "inject_mode": args.inject_mode}
     for step in range(1, args.steps + 1):
         try:
             x0, _ = next(it)

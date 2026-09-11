@@ -45,6 +45,9 @@ def main():
     ap.add_argument("--hide-steps", type=int, default=50)
     ap.add_argument("--rec-steps", type=int, default=50)
     ap.add_argument("--strengths", default="0.25,0.5,1.0")
+    ap.add_argument("--pixel-res", type=int, default=None,
+                    help="cover 的像素尺寸；隐空间模型必须与 VAE 训练时的 --resize 一致"
+                         "（默认从 checkpoint 的 args.resize 推断，否则 32）")
     ap.add_argument("--pixel-baseline", action="store_true",
                     help="用像素空间模型跑同一套指标，作为对照")
     ap.add_argument("--out", default="results/ldm_pipeline.md")
@@ -53,23 +56,37 @@ def main():
     seed_everything(args.seed)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    stego = load_stego(args.ddpm_ckpt, device, with_vae=not args.pixel_baseline)
-    io = StegoIO(stego)
-    print(f"[space] {io.describe()}", flush=True)
+    _ck = torch.load(args.ddpm_ckpt, map_location="cpu", weights_only=False)
+    _margs = _ck.get("args", {})
+    pixel_res = args.pixel_res or _margs.get("resize") or 32
 
+    # 先读解码器配置，再用同一套容量参数构造 stego（否则 bins_per_bit / 槽位数不匹配）
     dec, cfg = None, None
     if os.path.exists(args.decoder_ckpt):
         ck = torch.load(args.decoder_ckpt, map_location=device, weights_only=True)
         cfg = ck["config"]
+        print(f"[decoder] 载入 {args.decoder_ckpt}: n_bits={cfg['n_bits']} ecc={cfg['ecc']} "
+              f"bpb={cfg['bpb']} check={cfg['n_check_bits']} res={cfg['res']}", flush=True)
+    else:
+        print(f"[decoder] 未找到 {args.decoder_ckpt}，只测 matched-filter 接收", flush=True)
+
+    _cfg = cfg or {}
+    stego = load_stego(args.ddpm_ckpt, device, with_vae=not args.pixel_baseline,
+                       n_bits=_cfg.get("n_bits", 16), ecc_reps=_cfg.get("ecc", 3),
+                       bins_per_bit=_cfg.get("bpb", 2),
+                       n_check_bits=_cfg.get("n_check_bits", 32),
+                       inject_mode=_cfg.get("inject_mode", "replace"))
+    io = StegoIO(stego, pixel_res=pixel_res)
+    print(f"[space] {io.describe()}  pixel_res={pixel_res}", flush=True)
+
+    if cfg is not None:
         dec = RingDecoder(2 * cfg["n_pairs"],
                           cfg["n_bits"] * cfg["ecc"] + cfg["n_check_bits"]).to(device)
         dec.load_state_dict(ck["decoder"])
         dec.eval()
-        print(f"[decoder] 载入 {args.decoder_ckpt}", flush=True)
-    else:
-        print(f"[decoder] 未找到 {args.decoder_ckpt}，只测 matched-filter 接收", flush=True)
 
-    loader = cifar_loader(args.data_root, train=False, batch_size=args.batch)
+    loader = cifar_loader(args.data_root, train=False, batch_size=args.batch,
+                          resize=None if pixel_res == 32 else pixel_res)
     covers = gather_covers(loader, args.n).to(device)
     keys = [token_key() for _ in range(args.n)]
     nonces = derive_nonces_from_keys(keys, start=0)

@@ -21,8 +21,20 @@ CIFAR_TF = transforms.Compose([
 
 
 def cifar_loader(data_root: str, train: bool = False, batch_size: int = 16,
-                 shuffle: bool = False) -> DataLoader:
-    ds = datasets.CIFAR10(data_root, train=train, download=True, transform=CIFAR_TF)
+                 shuffle: bool = False, resize: int | None = None) -> DataLoader:
+    """CIFAR-10 loader。
+
+    resize：先把图放大到该尺寸（如 64）。**隐空间模型必须与 VAE 训练时的输入尺寸一致**
+    （native VAE 用 --resize 64 训练时，这里的 cover 也必须是 64×64，
+    否则编码-解码的像素尺度不一致，PSNR 无意义）。
+    """
+    tf = []
+    if resize is not None:
+        tf.append(transforms.Resize(resize, antialias=True))
+    tf += [transforms.ToTensor(),
+           transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
+    ds = datasets.CIFAR10(data_root, train=train, download=True,
+                          transform=transforms.Compose(tf))
     return DataLoader(ds, batch_size=batch_size, shuffle=shuffle)
 
 
