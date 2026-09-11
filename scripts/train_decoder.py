@@ -26,7 +26,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from krd import RingDecoder, Schedule, TrajStego, UNet
 from krd.distortions import apply_attack, random_distortion
 from krd.metrics import bit_accuracy
-from krd.utils import derive_nonces_from_keys, seed_everything, token_key
+from krd.utils import (derive_nonces_from_keys, resolve_num_workers, seed_everything,
+                       token_key)
 
 
 def load_stego(ckpt_path: str, device: str, n_bits: int = 16, ecc_reps: int = 3,
@@ -63,6 +64,8 @@ def main():
     ap.add_argument("--n-check-bits", type=int, default=32)
     ap.add_argument("--eval-size", type=int, default=128)
     ap.add_argument("--eval-every", type=int, default=500)
+    ap.add_argument("--num-workers", type=int, default=-1,
+                    help="DataLoader worker 数；-1 = 自动探测（受限沙箱下自动回退 0）")
     ap.add_argument("--tiny", action="store_true")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
@@ -85,8 +88,10 @@ def main():
     ds = datasets.CIFAR10(args.data_root, train=True, download=True, transform=tf)
     if args.tiny:
         ds = Subset(ds, range(64))
+    num_workers = resolve_num_workers(args.num_workers)
     loader = DataLoader(ds, batch_size=args.batch_size, shuffle=True, drop_last=True,
-                        num_workers=2, pin_memory=(device == "cuda"))
+                        num_workers=num_workers, pin_memory=(device == "cuda"),
+                        persistent_workers=num_workers > 0)
     it = iter(loader)
 
     # 固定评测批（nonce 协议与部署一致：nonce = H(key || counter)，不依赖 cover）

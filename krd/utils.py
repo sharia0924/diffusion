@@ -14,6 +14,34 @@ def seed_everything(seed: int = 0):
     torch.cuda.manual_seed_all(seed)
 
 
+def mp_ok(verbose: bool = True) -> bool:
+    """探测能否使用多进程队列（DataLoader num_workers>0 依赖它）。
+
+    受限沙箱/部分 Windows 环境下 `multiprocessing.Pipe()` 会抛
+    PermissionError(WinError 5)，此时必须回退到 num_workers=0，
+    否则脚本会在 DataLoader 构造阶段直接失败。
+    """
+    try:
+        import multiprocessing as mp
+        ctx = mp.get_context("spawn")
+        q = ctx.Queue()
+        q.close()
+        q.join_thread()
+        return True
+    except Exception as e:
+        if verbose:
+            print(f"[data] 多进程队列不可用（{type(e).__name__}: {e}）→ num_workers=0",
+                  flush=True)
+        return False
+
+
+def resolve_num_workers(requested: int = -1) -> int:
+    """requested < 0 时自动探测：可用则 2，否则 0。"""
+    if requested >= 0:
+        return requested
+    return 2 if mp_ok() else 0
+
+
 def str_to_bits(message: str, n_bits: int) -> torch.Tensor:
     """UTF-8 字节 -> 定长比特。n_bits 比特可容纳 floor(n_bits/8) 字节。"""
     payload = message.encode("utf-8")
