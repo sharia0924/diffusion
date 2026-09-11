@@ -20,8 +20,14 @@ import torch
 
 
 class Schedule:
-    def __init__(self, timesteps: int = 1000, mode: str = "linear", device="cpu"):
+    def __init__(self, timesteps: int = 1000, mode: str = "linear", device="cpu",
+                 clip_denoised: bool = True):
         self.T = int(timesteps)
+        # 是否把预测的 x0 截断到 [-1,1]。
+        # 像素空间应开启；**隐空间必须关闭** —— 潜变量幅值可达 ±6，
+        # 截断到 [-1,1] 会把往返 PSNR 从 ~33.6dB 打到 ~13.1dB（本机实测）。
+        # 该值来自 checkpoint 的 args（load_stego 会写回），保证训练/评测口径一致。
+        self.clip_denoised = bool(clip_denoised)
         if mode == "linear":
             betas = torch.linspace(1e-4, 0.02, self.T, dtype=torch.float64)
         elif mode == "cosine":
@@ -67,8 +73,13 @@ class Schedule:
     # ---------- 核心: DDIM 更新公式 ----------
 
     def ddim_update(self, model, x: torch.Tensor, t_cur: torch.Tensor, t_next: torch.Tensor,
-                    eta: float = 0.0, clip_denoised: bool = True) -> torch.Tensor:
-        """x(t_cur) -> x(t_next)。t_next < t_cur 为采样，t_next > t_cur 为反演。"""
+                    eta: float = 0.0, clip_denoised: bool | None = None) -> torch.Tensor:
+        """x(t_cur) -> x(t_next)。t_next < t_cur 为采样，t_next > t_cur 为反演。
+
+        clip_denoised=None 时使用实例设置 self.clip_denoised（隐空间应为 False）。
+        """
+        if clip_denoised is None:
+            clip_denoised = self.clip_denoised
         eps = model(x, t_cur)
         x0 = self.predict_x0(x, t_cur, eps, clip_denoised)
         if bool((t_next == 0).all()):
@@ -86,7 +97,7 @@ class Schedule:
 
     @torch.no_grad()
     def ddim_invert(self, model, x0: torch.Tensor, steps: int,
-                    clip_denoised: bool = True) -> torch.Tensor:
+                    clip_denoised: bool | None = None) -> torch.Tensor:
         """x_0 -> x_T（确定性反演, 步数 = steps, 由调用方自由选择 —— 隐藏端“不指定步数”）。"""
         seq = self.timestep_seq(steps)
         x = x0
@@ -98,7 +109,7 @@ class Schedule:
 
     @torch.no_grad()
     def ddim_sample(self, model, x_T: torch.Tensor, steps: int,
-                    eta: float = 0.0, clip_denoised: bool = True) -> torch.Tensor:
+                    eta: float = 0.0, clip_denoised: bool | None = None) -> torch.Tensor:
         """x_T -> x_0（确定性采样, 默认 eta=0）。"""
         seq = self.timestep_seq(steps)
         x = x_T

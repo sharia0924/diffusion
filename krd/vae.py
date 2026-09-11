@@ -178,21 +178,27 @@ class VAEWrapper:
                 raise FileNotFoundError(f"native VAE 需要已训练的 checkpoint: {ckpt}")
             ck = torch.load(ckpt, map_location=device, weights_only=False)
             a = ck.get("args", {})
-            cm = a.get("ch_mults", (1, 2, 4, 8))
-            if isinstance(cm, str):          # argparse 存进来的是 "1,2,4,8" 字符串
+            cm = a.get("ch_mults", (1, 2, 4))
+            if isinstance(cm, str):          # argparse 存进来的是 "1,2,4" 字符串
                 cm = tuple(int(v) for v in cm.split(","))
             cm = tuple(int(v) for v in cm)
             self.ch_mults = cm
+            # downsample 必须与 ch_mults 级数一致（NativeVAE 内有断言）。
+            # 之前回退值写死为 3，会把 2 级下采样的 checkpoint 误判成 4× 压缩。
+            ds = int(a.get("downsample", len(cm) - 1))
             self.model = NativeVAE(in_ch=a.get("in_ch", 3), base=a.get("base", 64),
                                    z_ch=a.get("z_ch", 4),
-                                   downsample=a.get("downsample", len(cm) - 1),
-                                   ch_mults=cm).to(device)
+                                   downsample=ds, ch_mults=cm).to(device)
             self.model.load_state_dict(ck["model"])
             self.model.eval()
             for p in self.model.parameters():
                 p.requires_grad_(False)
             self.latent_channels = int(a.get("z_ch", 4))
-            self.downsample = 2 ** int(a.get("downsample", 3))
+            # 命名约定（避免混淆）：
+            #   self.downsample_exp = 下采样级数（每级 ×2）
+            #   self.downsample     = 线性压缩倍数 = 2 ** downsample_exp
+            self.downsample_exp = ds
+            self.downsample = 2 ** ds
             self.scaling_factor = float(a.get("scaling_factor", 1.0))
             self.model_id = ckpt
         elif backend == "sd":
@@ -230,8 +236,10 @@ class VAEWrapper:
         return (self.latent_channels, h // self.downsample, w // self.downsample)
 
     def describe(self) -> str:
+        exp = getattr(self, "downsample_exp", None)
+        exp_s = f" (2^{exp})" if exp is not None else ""
         return (f"VAE[{self.backend}] ch={self.latent_channels} "
-                f"down={self.downsample}x scale={self.scaling_factor:.5f} "
+                f"down={self.downsample}x{exp_s} scale={self.scaling_factor:.5f} "
                 f"src={self.model_id}")
 
 

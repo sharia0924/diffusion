@@ -53,7 +53,12 @@ def load_stego(ckpt_path: str, device: str, n_bits: int = 16, ecc_reps: int = 3,
     margs = ckpt.get("args", {})
     unet = build_unet_from_args(margs, device)
     unet.load_state_dict(ckpt.get("ema", ckpt["model"]))
-    sched = Schedule(margs.get("timesteps", 1000), device=device)
+    # clip_denoised 必须与训练时一致：隐空间为 False（潜变量幅值远超 [-1,1]，
+    # 截断会把往返 PSNR 从 ~33.6dB 打到 ~13.1dB —— 见 krd/schedule.py 注释）
+    _clip = margs.get("clip_denoised")
+    if _clip is None:
+        _clip = (margs.get("vae_backend", "none") == "none")
+    sched = Schedule(margs.get("timesteps", 1000), device=device, clip_denoised=bool(_clip))
     stego = TrajStego(unet, sched, n_bits=n_bits, ecc_reps=ecc_reps,
                       bins_per_bit=bins_per_bit, n_check_bits=n_check_bits,
                       res=res or margs.get("latent_res", 32), device=device)

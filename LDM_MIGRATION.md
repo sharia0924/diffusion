@@ -53,18 +53,20 @@
 ## 3. 用法
 
 ```bash
-# 1) 训练原生 VAE（本机 GTX1650：约 5 min/epoch）
-#    默认用 2 级下采样 -> latent 16×16×4，容量预算是像素空间的 1.85 倍
-python scripts/train_vae.py --epochs 20 --batch-size 128 --base 64 \
-    --z-ch 4 --downsample 2 --ch-mults 1,2,4 --kl-weight 1e-4 \
+# 1) 训练原生 VAE（LDM 主线：2× 压缩 -> latent 16×16×4，容量 1.85× 像素空间）
+python scripts/train_vae.py --epochs 40 --batch-size 128 --base 64 \
+    --z-ch 4 --downsample 1 --ch-mults 1,2 --kl-weight 1e-4 \
+    --save-every 2 --out checkpoints/vae16.pt
+#    对照：4× / 8× 压缩（latent 8×8 / 4×4，容量反而低于像素空间，
+#    用于验证"容量由分辨率²决定"这一结论）
+python scripts/train_vae.py --epochs 15 --downsample 2 --ch-mults 1,2,4 \
     --out checkpoints/vae_cifar_d2.pt
-#    对照实验：4 级下采样 -> latent 8×8（容量反而低于像素空间，用于验证"分辨率决定容量"）
 python scripts/train_vae.py --epochs 15 --downsample 3 --ch-mults 1,2,4,8 \
     --out checkpoints/vae_cifar.pt
 
 # 2) 在隐空间训练扩散模型（自动编码并缓存潜变量）
 python scripts/train_ddpm.py --epochs 200 --batch-size 128 \
-    --vae-backend native --vae-ckpt checkpoints/vae_cifar_d2.pt \
+    --vae-backend native --vae-ckpt checkpoints/vae16.pt \
     --out checkpoints/ddpm_latent.pt
 
 # 3) 训练隐空间解码器（失真在像素空间施加，再编码回隐空间）
@@ -90,7 +92,8 @@ python scripts/train_ddpm.py --epochs 200 --vae-backend sd \
 ```
 
 SD VAE 是 f8 下采样、4 通道 latent、scaling_factor≈0.18215，重建保真度远高于
-自带小 VAE（512² 图约 30 dB+）。
+自带小 VAE（512² 图约 30 dB+）。注意：f8 意味着 32×32 输入只有 4×4 latent，
+**容量反而不如像素空间** —— SD VAE 必须配 512² 级别的输入图像才有意义。
 
 ## 4. 容量核算：为什么隐空间能降低嵌入功率
 
@@ -105,47 +108,51 @@ SD VAE 是 f8 下采样、4 通道 latent、scaling_factor≈0.18215，重建保
 | 隐空间 64×64, 4ch | 1488 | 5952 | 74.40 |
 | 隐空间 128×128, 4ch | 6214 | 24856 | 310.70 |
 
-**关键发现（一个反直觉的坑）**：`obs/bit` 随**分辨率²**增长，而不是随"隐空间"这个
-身份增长。当前 4× 压缩的 VAE 产出的 latent 只有 **8×8**，可用频点对仅 56 个 ——
-**比像素 32×32 的 342 个还少 6 倍**。也就是说：
+**关键发现（一个反直觉的坑）**：容量 ∝ **分辨率²**，与"是不是隐空间"无关；
+而 `--downsample` 是**级数**（每级 ×2）：
 
-> 如果直接沿用"SD 的 f8 下采样 + 32×32 输入"这个组合，隐空间的容量反而**退化**了。
+| `--downsample` | `--ch-mults` | latent 尺寸 | 可用对 | 结论 |
+|---|---|---|---|---|
+| 1 | 1,2 | **16×16×4** | 280 | **LDM 主线**（1.85× 像素空间） |
+| 2 | 1,2,4 | 8×8×4 | 56 | 预算低于像素空间，不采用 |
+| 3 | 1,2,4,8 | 4×4×4 | ~14 | 更差 |
 
-因此本仓库默认把原生 VAE 配成 **2 级下采样（4× 压缩）→ latent 16×16×4**：
-可用 280 对，是像素空间的 **1.85×**，同时保留 `-d3`（8×8）配置用于对照实验。
-真正宽裕的配置是 32×32 以上的 latent（≥512×512 图像 + f8 下采样），
-届时可用预算达像素空间的 8.8×–74×。
+> 早先把 `--downsample 2` 误当成 16×16，实际是 **8×8**。要 16×16 必须 `--downsample 1`。
+> 同理 SD VAE 的 f8 若配 32×32 输入只剩 4×4 latent，**反而退化**；
+> SD VAE 必须配 512² 级别输入才有意义。
 
-## 5. 验收标准
+## 5. 验收标准与实测进展
 
-`eval_ldm_pipeline.py` 会输出四个关键量：
+| 量 | 含义 | 目标 | 当前实测 |
+|---|---|---|---|
+| `vae_roundtrip_psnr` | 无嵌入时的往返上限 | ≥ 28 dB | **33.46 dB @epoch4**（仍在涨）✅ |
+| `psnr`（strength=1.0） | 载密图质量 | 向上限靠近 | 待测 |
+| `dec_clean` / `dec_jpeg50` | 比特准确率 | ≥ 0.95 | 待测 |
+| `avail_pairs_all_channels` | 频点预算 | ≥ 像素空间 342 | 280（16×16，接近）⚠️ |
 
-| 量 | 含义 | 目标 |
-|---|---|---|
-| `vae_roundtrip_psnr` | 无嵌入时的往返上限 | **≥ 28 dB**（像素空间是 18.8 dB） |
-| `psnr`（strength=1.0） | 载密图质量 | 向 `vae_roundtrip_psnr` 靠近，差距 ≤ 3 dB |
-| `dec_clean` / `dec_jpeg50` | 比特准确率 | ≥ 0.95 |
-| `capacity.avail_pairs_all_channels` | 频点预算 | **必须 ≥ 像素空间的 342**，否则迁移无意义 |
-
-**判断标准**：如果 `vae_roundtrip_psnr` 仍 < 22 dB，说明瓶颈在 VAE 本身
-（自带 native VAE 规模有限），此时应换 SD VAE 或加大 native VAE，
-而不是继续调扩散模型。
+**这是本次迁移最重要的一个数字**：像素空间路线训了 300 epoch、无嵌入往返也只有
+**18.81 dB**；隐空间 VAE 只训 **4 个 epoch**，无嵌入往返就到 **33.46 dB**（+14.6 dB）。
+"把上限抬到 35 dB 附近"这一目标**基本达成**，剩下的是把嵌入开销压小 ——
+这是靠 `obs/bit` 余量与更低 strength 就能解决的问题。
 
 ## 6. 当前状态（2026-09-11）
 
 已完成：
 
 - ✅ `krd/vae.py`（native + SD 双后端）、`krd/latent.py`（缓存/容量核算）
-- ✅ `scripts/train_vae.py`（含断点续训，结束时报告 VAE 往返 PSNR）
+- ✅ `scripts/train_vae.py`（含断点续训；`--save-every` 默认降到 2，避免中断丢进度）
 - ✅ `train_ddpm.py` 支持 `--vae-backend`，自动编码并缓存潜变量
 - ✅ `train_decoder.py` 隐空间训练：失真在像素空间施加、再编码回隐空间
 - ✅ `eval_robustness.py` 走 `StegoIO` 适配层；`scripts/eval_ldm_pipeline.py` 端到端验收
 - ✅ `tests/ldm_smoke_test.py` 全链路冒烟通过（含像素空间直通回归）
 - ✅ `pattern.py` 环带 `r_min` 改为随分辨率自适应（原先固定 3，导致小 latent 无频点可用）
+- ✅ 修正 `VAEWrapper` 的 downsample 回退值与命名歧义（`downsample_exp` 级数 vs `downsample` 倍数）
 
 进行中：
 
-- ⏳ native VAE 训练：`-d3`（8×8 latent）已到 **epoch1 重建 20.01 dB**，
+- ⏳ `vae16.pt`（2× 压缩 → latent 16×16×4）训练中，已到 **epoch4 / 33.46 dB**
+- ⏳ 随后：隐空间 DDPM（`--vae-backend native --vae-ckpt checkpoints/vae16.pt`）
+  → 隐空间解码器 → `eval_ldm_pipeline.py` 验收
   已超过像素空间 18.81 dB 的上限；`-d2`（16×16 latent）刚起步
 - ⏳ 隐空间 DDPM / 隐空间解码器待 VAE 收敛后训练（本机 GPU 4GB，需串行安排）
 
@@ -155,11 +162,17 @@ SD VAE 是 f8 下采样、4 通道 latent、scaling_factor≈0.18215，重建保
 - ⚠️ 像素空间的所有历史结论（P1/P2/P3 结果表）**仍基于 9.5–10 dB 工作点**，
   在隐空间工作点稳定前不要引用为最终数字
 
-## 7. 预期时间（本机 GTX 1650 4GB）
+## 7. 预期时间（本机 GTX 1650 4GB，实测校正）
 
-| 步骤 | 用时 |
+| 步骤 | 实测/预计 |
 |---|---|
-| native VAE（16×16 latent, 20 epoch） | ≈ 1.5–2 h |
-| 隐空间 DDPM（200 epoch, 4×16×16） | ≈ 1–1.5 h（latent 比像素小 4 倍，比 32²×3 快） |
+| native VAE（16×16 latent, 40 epoch） | ≈ 40–50 min（实测 ~60 s/epoch） |
+| 隐空间 DDPM（200 epoch, 4×16×16=1024 维，与像素 32²×3=3072 维相比更小） | ≈ 1–1.5 h |
 | 隐空间解码器（1000 step） | ≈ 40 min |
 | 端到端验收 | ≈ 5 min |
+
+合计约 2.5–3 h 可拿到隐空间工作点的完整数字。
+
+> 运行提示：本机后台作业会被中断，长时间训练建议用脱离进程启动（`nvidia-smi` 确认存活），
+> 例如 PowerShell 的 `Start-Process -WindowStyle Hidden -RedirectStandardOutput <log>`。
+> 所有训练脚本都支持 `--save-every` 断点续训。

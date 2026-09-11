@@ -1,0 +1,22 @@
+{
+  "vae_ckpt": "checkpoints/vae16.last.pt",
+  "ddpm_ckpt": "checkpoints/ddpm_latent.last.pt",
+  "n": 8,
+  "latent_shape": [
+    4,
+    16,
+    16
+  ],
+  "vae_roundtrip_psnr": 37.244796678898005,
+  "vae_roundtrip_ssim": 0.9866988062858582,
+  "ddim_rows": [
+    {
+      "steps": 50,
+      "roundtrip_psnr": 33.55611359165927,
+      "roundtrip_ssim": 0.9390778541564941,
+      "latent_rel_mse": 0.0057751202138844986,
+      "latent_psnr": 26.080284118652344
+    }
+  ],
+  "gap_db": 3.6886830872387364
+}

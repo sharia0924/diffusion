@@ -102,12 +102,21 @@ def main():
                     help="先把图像缩放到该尺寸再编码（如 256，配合 SD VAE 使用）")
     ap.add_argument("--in-ch", type=int, default=None,
                     help="U-Net 输入通道；默认像素空间 3、隐空间取 VAE 的 latent_channels")
+    ap.add_argument("--clip-denoised", choices=["auto", "on", "off"], default="auto",
+                    help="是否把预测 x0 截断到 [-1,1]。auto = 像素空间开、隐空间**关**；"
+                         "潜变量幅值可达 ±6，截断到 [-1,1] 会毁掉往返"
+                         "（实测 latent 往返 33.6dB -> 13.1dB）")
     ap.add_argument("--tiny", action="store_true")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
     seed_everything(args.seed)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    # 隐空间默认关闭 x0 截断（见 --clip-denoised 的帮助）：潜变量幅值远超 [-1,1]
+    if args.clip_denoised == "auto":
+        args.clip_denoised = (args.vae_backend == "none")
+    else:
+        args.clip_denoised = (args.clip_denoised == "on")
     use_amp = (args.amp == "on") and device == "cuda"
     if args.amp == "on" and device != "cuda":
         print("[setup] 非 CUDA 环境，忽略 --amp on", flush=True)

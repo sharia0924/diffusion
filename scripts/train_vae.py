@@ -57,7 +57,9 @@ def main():
                     help="KL 项权重（小值 -> 接近确定性自编码器，重建更保真）")
     ap.add_argument("--resize", type=int, default=None, help="先把图像缩放到该尺寸")
     ap.add_argument("--num-workers", type=int, default=-1)
-    ap.add_argument("--save-every", type=int, default=5)
+    ap.add_argument("--save-every", type=int, default=2,
+                    help="每 N 个 epoch 写一次断点；默认 2 —— VAE 单 epoch 较贵，"
+                         "间隔太大会在中断时丢掉全部进度")
     ap.add_argument("--log-every", type=int, default=100)
     ap.add_argument("--tiny", action="store_true")
     ap.add_argument("--seed", type=int, default=0)
