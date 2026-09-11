@@ -60,3 +60,74 @@ def repeat_nonces(key: str, n: int, shared: bool = False) -> list[str]:
     if shared:
         return [derive_nonces_from_keys([key], start=0)[0]] * n
     return derive_nonces_from_keys([key] * n, start=0)
+
+
+class StegoIO:
+    """统一的"像素空间 <-> 模型空间"适配层（LDM 迁移用）。
+
+    像素空间模型：所有方法直通，行为与以前完全一致。
+    隐空间模型：cover 先编码成潜变量再嵌入；失真在**像素**空间施加后再编码回来
+    （JPEG/噪声/几何攻击都定义在像素上）；PSNR/SSIM/LPIPS 等图像级指标
+    在解码回像素后计算。
+    """
+
+    def __init__(self, stego, pixel_res: int | None = None):
+        self.stego = stego
+        self.vae = getattr(stego, "vae", None)
+        self.latent = self.vae is not None
+        self.pixel_res = pixel_res or getattr(stego, "pixel_res", 32)
+
+    # ---- 空间转换 ----
+    def to_space(self, x_pix: torch.Tensor) -> torch.Tensor:
+        return x_pix if not self.latent else self.vae.encode(x_pix, sample=False)
+
+    def to_pixels(self, z: torch.Tensor) -> torch.Tensor:
+        if not self.latent:
+            return z
+        return self.vae.decode(z, target_hw=(self.pixel_res, self.pixel_res))
+
+    # ---- 流水线 ----
+    def hide(self, covers_pix, bits, keys, hide_steps, strength, nonces=None):
+        return self.stego.hide(self.to_space(covers_pix), bits, keys, hide_steps,
+                               strength=strength, nonces=nonces)
+
+    def recover(self, z_or_pix, keys, rec_steps, decoder, nonces=None):
+        return self.stego.recover(z_or_pix, keys, rec_steps, decoder, nonces=nonces)
+
+    def recover_features(self, z_or_pix, keys, rec_steps, nonces=None):
+        return self.stego.recover_features(z_or_pix, keys, rec_steps, nonces=nonces)
+
+    def invert(self, z_or_pix, steps):
+        return self.stego.invert_latents(z_or_pix, steps)
+
+    def attack(self, z_or_pix, fn):
+        """在像素空间施加失真，再回到模型空间（隐空间模型的真实信道）。"""
+        return self.to_space(fn(self.to_pixels(z_or_pix)))
+
+    def regeneration_attack(self, z, t_reg: int, steps: int):
+        """扩散再生攻击：在模型空间加噪重采样；隐空间模型额外解码到像素。"""
+        return self.stego.regeneration_attack(z, t_reg=t_reg, steps=steps)
+
+    def baseline_psnr(self, covers_pix) -> float:
+        """无嵌入时的往返 PSNR —— 隐空间链路的天然上限（VAE 往返）。"""
+        if not self.latent:
+            return float("nan")
+        from krd.metrics import psnr
+        return psnr(self.to_pixels(self.to_space(covers_pix)), covers_pix)
+
+    def capacity_report(self, n_bits: int) -> dict | None:
+        zs = getattr(self.stego, "latent_shape", None)
+        if zs is None:
+            return None
+        from krd.latent import latent_capacity_report
+        return latent_capacity_report(tuple(zs), n_bits)
+
+    def describe(self) -> str:
+        if not self.latent:
+            return "空间=像素（无 VAE）"
+        return (f"空间=隐空间 {tuple(getattr(self.stego, 'latent_shape', []))}，"
+                f"VAE={self.vae.describe()}")
+
+
+def build_stego_io(stego, pixel_res: int | None = None) -> StegoIO:
+    return StegoIO(stego, pixel_res=pixel_res)

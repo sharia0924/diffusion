@@ -1,12 +1,23 @@
-"""阶段 1：在 CIFAR-10 上预训练基础 DDPM（U-Net + eps 预测）。
+"""阶段 1：训练基础扩散模型（U-Net + eps 预测）。
+
+支持两种空间：
+  - **像素空间**（默认）：直接在 CIFAR-10 32×32 上训练；
+  - **隐空间（LDM 迁移）**：`--vae-backend native|sd`，先用 VAE 把图编码成潜变量
+    （离线缓存到磁盘），再在潜空间上训练扩散模型。隐空间的频点预算 ∝ 分辨率²，
+    是突破像素空间 PSNR 上限的关键。
 
 支持**断点续训**：每 `--save-every` 个 epoch 把完整训练状态（model/ema/optimizer/epoch）
 写入 `<out>.last.pt`；下次启动若发现该文件且已完成 epoch 数不足，则自动恢复继续训练。
-这对 300+ epoch 的长时间训练是必需的（本机 GTX 1650 上 300 epoch ≈ 9.5 小时）。
 
 用法:
   python scripts/train_ddpm.py --epochs 60 --batch-size 128
-  python scripts/train_ddpm.py --epochs 300 --save-every 10   # 若已有 60 epoch 断点则自动续训
+  python scripts/train_ddpm.py --epochs 300 --save-every 10   # 自动续训
+  # LDM: 原生 VAE（先跑 scripts/train_vae.py）
+  python scripts/train_ddpm.py --epochs 200 --vae-backend native \
+      --vae-ckpt checkpoints/vae_cifar.pt --out checkpoints/ddpm_latent.pt
+  # LDM: SD VAE（需要 pip install diffusers）
+  python scripts/train_ddpm.py --epochs 200 --vae-backend sd \
+      --out checkpoints/ddpm_latent_sd.pt
   python scripts/train_ddpm.py --tiny          # 冒烟: 少量数据/轮数, 验证流程
 """
 
@@ -21,7 +32,8 @@ from torchvision import datasets, transforms
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from krd import Schedule, UNet
-from krd.utils import seed_everything
+from krd.latent import LatentTensorDataset, build_latent_cache, cache_key, cache_path
+from krd.utils import resolve_num_workers, seed_everything
 
 CIFAR_TRAIN_SIZE = 50000
 
@@ -34,31 +46,13 @@ def make_grad_scaler(enabled: bool):
         return torch.cuda.amp.GradScaler(enabled=enabled)
 
 
-def _mp_ok() -> bool:
-    """探测能否使用多进程队列（DataLoader num_workers>0 依赖它）。
-
-    受限沙箱下 multiprocessing.Pipe() 会抛 PermissionError(WinError 5)，
-    必须回退到 num_workers=0，否则脚本在 DataLoader 构造阶段直接失败。
-    """
-    try:
-        import multiprocessing as mp
-        ctx = mp.get_context("spawn")
-        q = ctx.Queue()
-        q.close()
-        q.join_thread()
-        return True
-    except Exception as e:
-        print(f"[data] 多进程队列不可用（{type(e).__name__}: {e}）→ num_workers=0",
-              flush=True)
-        return False
-
-
-def build_dataset(data_root: str, tiny: bool):
-    tf = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-    ])
-    ds = datasets.CIFAR10(data_root, train=True, download=True, transform=tf)
+def build_dataset(data_root: str, tiny: bool, size: int | None = None):
+    tf = [transforms.ToTensor(),
+          transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
+    if size is not None:
+        tf.insert(0, transforms.Resize(size, antialias=True))
+    ds = datasets.CIFAR10(data_root, train=True, download=True,
+                          transform=transforms.Compose(tf))
     if tiny:
         ds = Subset(ds, range(2048))
     return ds
@@ -93,13 +87,25 @@ def main():
                     help="开启 cudnn.benchmark（输入尺寸固定时更快）")
     ap.add_argument("--oom-retry", action="store_true", default=True,
                     help="显存不足时自动减半 batch 重试（默认开）")
+    # ---- LDM（隐空间）相关 ----
+    ap.add_argument("--vae-backend", choices=["none", "native", "sd"], default="none",
+                    help="none = 像素空间训练；native/sd = 在 VAE 隐空间训练（LDM 迁移）")
+    ap.add_argument("--vae-ckpt", default="checkpoints/vae_cifar.pt",
+                    help="--vae-backend native 时的 VAE checkpoint（train_vae.py 产物）")
+    ap.add_argument("--vae-model-id", default="stabilityai/sd-vae-ft-mse",
+                    help="--vae-backend sd 时的 HuggingFace 模型 id")
+    ap.add_argument("--latent-cache-dir", default="cache/latents",
+                    help="潜变量缓存目录（离线编码一次，之后复用）")
+    ap.add_argument("--rebuild-latent-cache", action="store_true",
+                    help="强制重建潜变量缓存")
+    ap.add_argument("--resize", type=int, default=None,
+                    help="先把图像缩放到该尺寸再编码（如 256，配合 SD VAE 使用）")
+    ap.add_argument("--in-ch", type=int, default=None,
+                    help="U-Net 输入通道；默认像素空间 3、隐空间取 VAE 的 latent_channels")
     ap.add_argument("--tiny", action="store_true")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
     seed_everything(args.seed)
-
-    if args.num_workers < 0:
-        args.num_workers = 2 if _mp_ok() else 0
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     use_amp = (args.amp == "on") and device == "cuda"
@@ -111,7 +117,37 @@ def main():
     if args.cudnn_benchmark and device == "cuda":
         torch.backends.cudnn.benchmark = True
 
-    ds = build_dataset(args.data_root, args.tiny)
+    args.num_workers = resolve_num_workers(args.num_workers)
+    ds = build_dataset(args.data_root, args.tiny, args.resize)
+
+    # ---------------- 隐空间：编码 + 缓存 ----------------
+    vae = None
+    latent_meta = {}
+    if args.vae_backend == "none":
+        args.in_ch = args.in_ch or 3
+    else:
+        from krd.vae import build_vae
+        vae = build_vae(args.vae_backend, ckpt=args.vae_ckpt, device=device,
+                        model_id=args.vae_model_id)
+        args.in_ch = args.in_ch or vae.latent_channels
+        n = len(ds)
+        key = cache_key(vae.describe(), f"cifar-train-{n}", args.resize, n)
+        path = cache_path(args.latent_cache_dir, key)
+        if args.tiny:
+            path = path.replace(".pt", "_tiny.pt")
+        if os.path.exists(path) and not args.rebuild_latent_cache:
+            from krd.latent import load_latent_cache
+            latents, labels, latent_meta = load_latent_cache(path)
+            print(f"[latent] 复用缓存 {path} {tuple(latents.shape)}", flush=True)
+        else:
+            print(f"[latent] 编码数据集 -> {path}（{vae.describe()}）", flush=True)
+            latent_meta = build_latent_cache(vae, ds, path, batch_size=64, device=device)
+            from krd.latent import load_latent_cache
+            latents, labels, latent_meta = load_latent_cache(path)
+        ds = LatentTensorDataset(latents, labels)
+        from krd.latent import latent_capacity_report
+        args.latent_shape = [int(v) for v in latents.shape[1:]]
+        print(f"[latent] 几何 {tuple(args.latent_shape)}  {latent_meta}", flush=True)
 
     def make_loader(batch_size: int) -> DataLoader:
         return DataLoader(ds, batch_size=batch_size, shuffle=True,
@@ -124,7 +160,7 @@ def main():
         args.base = min(args.base, 32)
         batch_size = min(batch_size, 64)
 
-    model = UNet(base=args.base).to(device)
+    model = UNet(in_ch=args.in_ch, base=args.base).to(device)
     # fp16 下 up-path ResBlock 会溢出（实测 inf/nan），默认让 ResBlock 走 fp32
     model.fp32_resblocks = use_amp
     if args.channels_last:
@@ -134,8 +170,9 @@ def main():
     ema = {k: v.detach().clone() for k, v in model.state_dict().items()}
     scaler = make_grad_scaler(use_amp)
 
-    print(f"[setup] device={device} amp={use_amp} batch={batch_size} "
-          f"grad_accum={args.grad_accum} -> effective_batch={batch_size * args.grad_accum} "
+    print(f"[setup] device={device} amp={use_amp} batch={batch_size} in_ch={args.in_ch} "
+          f"vae={args.vae_backend} grad_accum={args.grad_accum} -> "
+          f"effective_batch={batch_size * args.grad_accum} "
           f"num_workers={args.num_workers} channels_last={args.channels_last}", flush=True)
     if device == "cuda":
         p = torch.cuda.get_device_properties(0)

@@ -51,55 +51,66 @@ def main():
     dec_ckpt = torch.load(args.decoder_ckpt, map_location=device, weights_only=True)
     cfg = dec_ckpt["config"]
     stego = load_stego(args.ddpm_ckpt, device, n_bits=cfg["n_bits"], ecc_reps=cfg["ecc"],
-                       bins_per_bit=cfg["bpb"], n_check_bits=cfg["n_check_bits"])
+                       bins_per_bit=cfg["bpb"], n_check_bits=cfg["n_check_bits"],
+                       with_vae=True)
     dec = RingDecoder(2 * cfg["n_pairs"],
                       cfg["n_bits"] * cfg["ecc"] + cfg["n_check_bits"]).to(device)
     dec.load_state_dict(dec_ckpt["decoder"])
     dec.eval()
+    io = build_stego_io(stego)
+    print(f"[space] {io.describe()}")
 
     loader = cifar_loader(args.data_root, train=False, batch_size=args.batch)
     covers, bits_all, keys_all, nonces_all = make_eval_inputs(
         loader, args.n, cfg["n_bits"], device, nonce_start=args.nonce_start)
 
     stegos = torch.cat([
-        stego.hide(covers[i:i + args.batch], bits_all[i:i + args.batch],
-                   keys_all[i:i + args.batch], args.hide_steps, args.strength,
-                   nonces=nonces_all[i:i + args.batch])
+        io.hide(covers[i:i + args.batch], bits_all[i:i + args.batch],
+                keys_all[i:i + args.batch], args.hide_steps, args.strength,
+                nonces=nonces_all[i:i + args.batch])
         for i in range(0, args.n, args.batch)
     ])
+    # 隐空间模型：图像级指标要解码回像素后再算
+    stegos_px = io.to_pixels(stegos)
+    base_rt = io.baseline_psnr(covers)
 
-    p = psnr(stegos, covers)
-    s = ssim(stegos, covers)
-    lp = lpips(stegos, covers)
+    p = psnr(stegos_px, covers)
+    s = ssim(stegos_px, covers)
+    lp = lpips(stegos_px, covers)
     lp_s = "n/a" if lp is None else f"{lp:.4f}"
     print(f"stego quality: PSNR {p:.2f} dB, SSIM {s:.4f}, LPIPS {lp_s} (n={args.n})")
+    if io.latent:
+        print(f"[latent] VAE 往返上限（无嵌入）: PSNR {base_rt:.2f} dB；"
+              f"容量报告: {io.capacity_report(cfg['n_bits'])}")
 
     def decode_acc(x_in: torch.Tensor, keys: list[str]) -> float:
         accs = []
         for i in range(0, args.n, args.batch):
-            logits = stego.recover(x_in[i:i + args.batch], keys[i:i + args.batch],
-                                   args.rec_steps, dec,
-                                   nonces=nonces_all[i:i + args.batch])
+            logits = io.recover(x_in[i:i + args.batch], keys[i:i + args.batch],
+                                args.rec_steps, dec,
+                                nonces=nonces_all[i:i + args.batch])
             accs.append(bit_accuracy(logits, bits_all[i:i + args.batch]))
         return sum(accs) / len(accs)
 
     rows = []
     for name, atk, param in STANDARD_ATTACKS:
-        sg = stegos
-        x_in = sg if atk == "clean" else apply_attack(sg, atk, param)
+        # 攻击定义在像素空间：先解码 -> 加失真 -> 回到模型空间
+        x_in = stegos if atk == "clean" else io.attack(
+            stegos, lambda t, a=atk: apply_attack(t, a[0], a[1]))
         rows.append((name, decode_acc(x_in, keys_all)))
         print(f"{name:>14s}: bit-acc {rows[-1][1]:.3f}", flush=True)
 
     # 扩散再生攻击（攻击代价同时报告相对 cover 与相对 stego，见 eval_regen.py 的说明）
     regen = torch.cat([
-        stego.regeneration_attack(stegos[i:i + args.batch], t_reg=args.regen_t,
-                                  steps=args.rec_steps)
+        io.regeneration_attack(stegos[i:i + args.batch], t_reg=args.regen_t,
+                               steps=args.rec_steps)
         for i in range(0, args.n, args.batch)
     ])
     acc = decode_acc(regen, keys_all)
     rows.append((f"regen(t={args.regen_t})", acc))
     print(f"{'regen':>14s}: bit-acc {acc:.3f} | "
-          f"cost vs cover {psnr(regen, covers):.2f} dB / vs stego {psnr(regen, stegos):.2f} dB")
+          f"cost vs cover {psnr(io.to_pixels(regen), covers):.2f} dB / "
+          f"vs stego {psnr(io.to_pixels(regen), stegos_px):.2f} dB")
 
     # 错密钥（密钥安全性: 应≈0.5；nonce 保持与隐藏一致）
     wrong = [token_key() for _ in range(args.n)]
@@ -112,15 +123,21 @@ def main():
         f.write("# KRD-Steg 鲁棒性评测\n\n")
         f.write(f"- 样本数 n={args.n}, 隐藏步数={args.hide_steps}, 复原步数={args.rec_steps}, "
                 f"容量={cfg['n_bits']} bits, strength={args.strength}\n")
+        f.write(f"- {io.describe()}\n")
         f.write(f"- nonce 协议: `nonce_i = H(key || nonce_start+i)`（自包含, 不依赖 cover）, "
                 f"nonce_start={args.nonce_start}\n")
+        if io.latent:
+            f.write(f"- **VAE 往返上限（无嵌入）: PSNR {base_rt:.2f} dB**"
+                    f" —— 这是整条链路的天花板\n")
+            f.write(f"- 容量报告: {io.capacity_report(cfg['n_bits'])}\n")
         f.write(f"- stego 质量: **PSNR {p:.2f} dB / SSIM {s:.4f} / LPIPS {lp_s}**"
                 f"（LPIPS backend: {lpips_backend() or 'unavailable'}）\n\n")
         f.write("| 攻击 | 比特准确率 |\n|---|---|\n")
         for name, a in rows:
             f.write(f"| {name} | {a:.3f} |\n")
         f.write("\n注: `crop*` 为**真裁剪**（裁边+边缘回填）；`translate*` 为零填充平移；\n"
-                "旧版 `crop` 是 `torch.roll` 循环平移，不具备裁剪语义。\n")
+                "旧版 `crop` 是 `torch.roll` 循环平移，不具备裁剪语义。\n"
+                "隐空间模型的所有失真都在**像素空间**施加后再编码回隐空间。\n")
     csv_path = args.out.replace(".md", ".csv")
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)

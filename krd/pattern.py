@@ -29,14 +29,40 @@ def _halfplane_bins(res: int, r_min: int, r_max: int) -> np.ndarray:
     return np.stack([ys[keep], xs[keep]], axis=1)
 
 
-def key_params(key: str, n_pairs: int, res: int = 32, r_min: int = 3,
+def default_r_min(res: int) -> int:
+    """环带内半径的默认值：随分辨率自适应。
+
+    小分辨率（隐空间 8×8 / 16×16）不能沿用固定的 r_min=3 —— 此时 Nyquist 上限
+    `res//2-1` 只有 3，可用频点会退化成个位数甚至 0。按 res 缩放；
+    对 res≥24 仍返回 3，保持历史结果可复现。
+    """
+    return max(1, min(3, res // 8))
+
+
+def ring_capacity(res: int, r_min: int | None = None) -> int:
+    """给定分辨率下环带内**可用频点对**总数（单通道，不含通道维度）。
+
+    LDM 迁移的容量核算依赖它：像素 32² 约 176 对；隐空间 8² 只有个位数，
+    16² 约 30 对，64² 约 900+ 对 —— 这就是"频点预算 ∝ 分辨率²"的量化依据。
+    """
+    r_min = default_r_min(res) if r_min is None else int(r_min)
+    r_max_cap = res // 2 - 1
+    if r_max_cap < r_min:
+        return 0
+    return len(_halfplane_bins(res, r_min, r_max_cap))
+
+
+def key_params(key: str, n_pairs: int, res: int = 32, r_min: int | None = None,
                nonce: str = "") -> dict:
     """由密钥(+nonce)确定性生成图案参数。n_pairs 为每图（单通道）写入的复数频点对数。
 
     nonce 用于逐图随机化图案位置：同一密钥在不同 nonce 下选择完全不同的频点/相位，
     使"多张同密钥载密图差分平均"的密钥恢复攻击失效（见 security.slot_detection_auc）。
+
+    r_min=None 时按分辨率自适应（见 default_r_min），小分辨率下才不会退化为空环带。
     """
     assert n_pairs > 0 and res % 2 == 0
+    r_min = default_r_min(res) if r_min is None else int(r_min)
     seed = int.from_bytes(
         hashlib.sha256(f"krd:{key}:{nonce}".encode("utf-8")).digest()[:8], "little"
     )
@@ -50,7 +76,8 @@ def key_params(key: str, n_pairs: int, res: int = 32, r_min: int = 3,
             break
     if chosen is None:
         raise ValueError(
-            f"res={res} 的环带放不下 {n_pairs} 对频点，请减小 n_pairs 或增大分辨率"
+            f"res={res} 的环带放不下 {n_pairs} 对频点（可用 {ring_capacity(res, r_min)} 对），"
+            f"请减小 n_pairs 或增大分辨率"
         )
 
     bins = _halfplane_bins(res, r_min, chosen)

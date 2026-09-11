@@ -30,15 +30,62 @@ from krd.utils import (derive_nonces_from_keys, resolve_num_workers, seed_everyt
                        token_key)
 
 
+def build_unet_from_args(margs: dict, device: str, check_compat: bool = False) -> UNet:
+    """按 checkpoint 中记录的配置重建 U-Net（支持隐空间 in_ch）。"""
+    unet = UNet(in_ch=margs.get("in_ch", 3), base=margs.get("base", 64)).to(device)
+    if check_compat:
+        lv = margs.get("latent_shape")
+        if lv is not None:
+            print(f"  [model] 隐空间模型: latent_shape={lv} in_ch={margs.get('in_ch')}")
+    return unet
+
+
 def load_stego(ckpt_path: str, device: str, n_bits: int = 16, ecc_reps: int = 3,
-               bins_per_bit: int = 2, n_check_bits: int = 32) -> TrajStego:
+               bins_per_bit: int = 2, n_check_bits: int = 32,
+               with_vae: bool = False, res: int | None = None) -> TrajStego:
+    """加载 DDPM（可选 VAE）并构造 TrajStego。
+
+    with_vae=True 且 checkpoint 是隐空间模型时，会一并加载 VAE 并挂到
+    `stego.vae` 上，供"潜变量 -> 图像"的变换（train_decoder.py 的输入必须是
+    像素空间，因为 JPEG/噪声等失真是定义在像素上的）。
+    """
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=True)
     margs = ckpt.get("args", {})
-    unet = UNet(base=margs.get("base", 64)).to(device)
+    unet = build_unet_from_args(margs, device)
     unet.load_state_dict(ckpt.get("ema", ckpt["model"]))
     sched = Schedule(margs.get("timesteps", 1000), device=device)
-    return TrajStego(unet, sched, n_bits=n_bits, ecc_reps=ecc_reps,
-                     bins_per_bit=bins_per_bit, n_check_bits=n_check_bits, device=device)
+    stego = TrajStego(unet, sched, n_bits=n_bits, ecc_reps=ecc_reps,
+                      bins_per_bit=bins_per_bit, n_check_bits=n_check_bits,
+                      res=res or margs.get("latent_res", 32), device=device)
+    vae = None
+    if with_vae:
+        backend = margs.get("vae_backend", "none")
+        if backend != "none":
+            from krd.vae import build_vae
+            vae = build_vae(backend, ckpt=margs.get("vae_ckpt"), device=device,
+                            model_id=margs.get("vae_model_id", "stabilityai/sd-vae-ft-mse"))
+            print(f"  [vae] {vae.describe()}")
+    stego.vae = vae
+    stego.latent_shape = margs.get("latent_shape")
+    stego.pixel_res = margs.get("resize") or 32
+    return stego
+
+
+def stego_to_images(stego, z: torch.Tensor) -> torch.Tensor:
+    """潜变量 -> 像素图（[-1,1]）；像素空间模型则原样返回。"""
+    vae = getattr(stego, "vae", None)
+    if vae is None:
+        return z
+    px = getattr(stego, "pixel_res", 32)
+    return vae.decode(z, target_hw=(px, px))
+
+
+def images_to_stego_space(stego, x: torch.Tensor) -> torch.Tensor:
+    """像素图 -> 模型所在空间（隐空间则编码）；像素空间模型则原样返回。"""
+    vae = getattr(stego, "vae", None)
+    if vae is None:
+        return x
+    return vae.encode(x, sample=False)
 
 
 def main():
@@ -77,7 +124,12 @@ def main():
         args.eval_size = 16
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    stego = load_stego(args.ddpm_ckpt, device, n_check_bits=args.n_check_bits)
+    # with_vae=True 仅对隐空间 checkpoint 生效（像素空间 checkpoint 的 vae_backend=none）
+    stego = load_stego(args.ddpm_ckpt, device, n_check_bits=args.n_check_bits,
+                       with_vae=True)
+    if getattr(stego, "vae", None) is not None:
+        print(f"[latent] 隐空间解码器训练: latent_shape={stego.latent_shape} "
+              f"（失真在像素空间施加，再编码回隐空间）", flush=True)
     decoder = RingDecoder(2 * stego.n_pairs, stego.total_embed_bits).to(device)
     opt = torch.optim.AdamW(decoder.parameters(), lr=args.lr, weight_decay=1e-4)
 
@@ -100,21 +152,42 @@ def main():
     eval_keys = [token_key(rng) for _ in range(args.eval_size)]
     eval_nonces = derive_nonces_from_keys(eval_keys, start=0)
 
+    # ---------------- 空间适配（像素空间直通；隐空间做 编码/解码 桥接） ----------------
+    #
+    # 关键点：JPEG/噪声等失真定义在**像素**上，而扩散在前向/隐藏在**潜变量**上。
+    # 因此隐空间模型的信道是：latent -> decode 到像素 -> 加失真 -> encode 回 latent。
+    # 这个"解码-再编码"本身就是 VAE 引入的额外信道损耗，必须在训练时就模拟。
+    def hide_space(x_pix, bits, keys, hide_steps, strength, nonces):
+        z = images_to_stego_space(stego, x_pix)
+        return stego.hide(z, bits, keys, hide_steps, strength=strength, nonces=nonces)
+
+    def to_space(x_img):
+        return images_to_stego_space(stego, x_img)
+
+    def to_images(z_or_img):
+        return stego_to_images(stego, z_or_img)
+
+    def distort(z, fn):
+        """在像素空间施加失真，再回到模型空间。"""
+        return to_space(fn(to_images(z)))
+
+    def recover_logits(z, keys, rs, dec, nonces):
+        return stego.recover(z, keys, rs, dec, nonces=nonces)
+
     def evaluate() -> dict:
         decoder.eval()
         n = args.eval_size
         bits = torch.randint(0, 2, (n, stego.n_bits), device=device).float()
         keys = eval_keys
-        sg = stego.hide(eval_x, bits, keys, args.hide_steps, strength=1.0,
-                        nonces=eval_nonces)
+        sg = hide_space(eval_x, bits, keys, args.hide_steps, 1.0, eval_nonces)
         out = {}
         for name, atk in [("clean", "clean"), ("jpeg50", ("jpeg", 50)),
                           ("noise05", ("noise", 0.05))]:
-            x_in = sg if atk == "clean" else apply_attack(sg, atk[0], atk[1])
+            x_in = sg if atk == "clean" else distort(sg, lambda t, a=atk: apply_attack(t, a[0], a[1]))
             rs = args.rec_steps
             if args.rec_jitter > 0:
                 rs += rng.randint(-args.rec_jitter, args.rec_jitter)
-            logits = stego.recover(x_in, keys, rs, decoder, nonces=eval_nonces)
+            logits = recover_logits(x_in, keys, rs, decoder, eval_nonces)
             out[name] = bit_accuracy(logits, bits)
         decoder.train()
         return out
@@ -138,11 +211,12 @@ def main():
         nonces = derive_nonces_from_keys(keys, start=step * 1000)
         strength = torch.empty(B, device=device).uniform_(args.strength_min, args.strength_max)
 
-        sg = stego.hide(x0, bits, keys, args.hide_steps, strength=strength, nonces=nonces)
+        sg = hide_space(x0, bits, keys, args.hide_steps, strength, nonces)
         x_in = torch.stack([
-            random_distortion(sg[i:i + 1], rng, schedule=stego.sched,
-                              sched_noise_prob=args.sched_noise_prob,
-                              geom_prob=args.geom_prob)[0]
+            distort(sg[i:i + 1], lambda t: random_distortion(
+                t, rng, schedule=stego.sched,
+                sched_noise_prob=args.sched_noise_prob,
+                geom_prob=args.geom_prob))[0]
             if rng.random() < args.distort_prob else sg[i]
             for i in range(B)
         ])
