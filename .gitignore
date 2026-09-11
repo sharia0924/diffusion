@@ -30,3 +30,4 @@ _tmp_*.py
 
 # ---- 潜变量缓存（LDM）: 体积大、可由 VAE 重建 ----
 cache/
+.pipeline.lock

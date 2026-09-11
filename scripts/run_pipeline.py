@@ -125,6 +125,66 @@ def probe_mp_ok() -> bool:
         return False
 
 
+def _pid_alive(pid: int) -> bool:
+    """判断进程是否存活（Windows: tasklist；POSIX: kill -0）。"""
+    try:
+        if os.name == "nt":
+            r = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                               capture_output=True, text=True, timeout=30)
+            return str(pid) in (r.stdout or "")
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        return False
+
+
+LOCK_PATH = os.path.join(BASE, ".pipeline.lock")
+
+
+def acquire_lock(force: bool = False) -> None:
+    """单实例互斥：防止同一时间跑两个流水线。
+
+    两个实例并跑会同时写同一个 checkpoint、抢同一块 GPU 显存
+    （实测 4GB 卡上两个 VAE 训练直接把显存打满），必须拦截。
+
+    - force=True（--force-lock）：直接接管锁文件，不做冲突检查；
+    - 陈旧锁（PID 已死）自动覆盖；
+    - 冲突时打印如何查看/结束已有实例。
+    """
+    old = 0
+    if os.path.exists(LOCK_PATH):
+        try:
+            old = int(open(LOCK_PATH, encoding="utf-8").read().strip() or 0)
+        except Exception:
+            old = 0
+
+    if force:
+        print(f"[pipeline] --force-lock: 跳过单实例检查（接管锁，原 pid={old or '无'}）")
+    elif old and old != os.getpid() and _pid_alive(old):
+        raise SystemExit(
+            f"[pipeline] 已有流水线在运行（pid={old}）；同时跑两个会争抢 GPU 与\n"
+            f"          同一份 checkpoint。请先结束它，或用 --force-lock 强制启动。\n"
+            f"          查看进度: Get-Content results\\logs\\*.out -Tail 20\n"
+            f"          结束它  : taskkill /PID {old} /T /F")
+    elif old:
+        print(f"[pipeline] 清理陈旧锁（pid={old} 已不存在）")
+
+    with open(LOCK_PATH, "w", encoding="utf-8") as f:
+        f.write(str(os.getpid()))
+    import atexit
+
+    def _release():
+        try:
+            if os.path.exists(LOCK_PATH):
+                cur = open(LOCK_PATH, encoding="utf-8").read().strip()
+                if cur == str(os.getpid()):
+                    os.remove(LOCK_PATH)
+        except Exception:
+            pass
+
+    atexit.register(_release)
+
+
 def sh(python: str, script: str, args: list[str], log_path: str) -> None:
     """运行仓库内脚本，输出实时回显并写日志。失败即终止。
 
@@ -184,7 +244,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--stages", nargs="+", default=["all"],
-                    choices=STAGE_ORDER + ["all"], help="要执行的阶段")
+                    choices=STAGE_ORDER + LDM_STAGE_ORDER + ["all"],
+                    help="要执行的阶段（像素空间与 LDM 阶段名都可用）")
     ap.add_argument("--force", action="store_true", help="已完成阶段也强制重跑")
     ap.add_argument("--tiny", action="store_true", help="冒烟模式: 全部参数缩到最小")
     ap.add_argument("--data-root", default="./data")
@@ -234,6 +295,8 @@ def main():
                     help="解码器训练随机失真中几何攻击的条件概率")
 
     # ---------------- LDM（隐空间）参数 ----------------
+    ap.add_argument("--force-lock", action="store_true",
+                    help="跳过单实例互斥检查（默认禁止两个流水线并跑）")
     ap.add_argument("--ldm", action="store_true",
                     help="启用 LDM 隐空间流水线（vae -> latent_ddpm -> latent_decoder -> 评测）")
     ap.add_argument("--finish", action="store_true",
@@ -297,6 +360,8 @@ def main():
     log_dir = os.path.join(args.results_dir, "logs")
 
     python = pick_python(args.python)
+    # 单实例互斥：两个流水线并跑会争抢 GPU 与同一份 checkpoint（实测直接打满 4GB 显存）
+    acquire_lock(force=args.force_lock)
 
     order = LDM_STAGE_ORDER if args.ldm else STAGE_ORDER
     stages = order if "all" in args.stages else [s for s in order if s in args.stages]
