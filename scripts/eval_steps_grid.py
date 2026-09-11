@@ -27,6 +27,7 @@ from krd.distortions import diff_jpeg
 from krd.metrics import bit_accuracy, psnr, ssim
 from krd.utils import seed_everything
 from scripts.eval_common import cifar_loader, make_eval_inputs
+from scripts.eval_setup import eval_setup
 from scripts.train_decoder import load_stego
 
 
@@ -34,12 +35,13 @@ def parse_ints(s: str) -> list[int]:
     return sorted({int(v) for v in s.split(",")})
 
 
-def decode_acc(stego, x_in, keys, nonces, rec_steps, decoder, bits, batch):
+def decode_acc(stego, x_in, keys, nonces, rec_steps, decoder, bits, batch, io=None):
+    """比特准确率；io（StegoIO）不为空时走编码/解码桥接（隐空间模型必需）。"""
     accs = []
     for i in range(0, x_in.shape[0], batch):
-        x_T = stego.invert_latents(x_in[i:i + batch], rec_steps)
-        feats = stego.features_from_latents(x_T, keys[i:i + batch], nonces[i:i + batch])
-        logits = stego.collapse(decoder(feats))
+        rx = io.recover if io is not None else stego.recover
+        logits = rx(x_in[i:i + batch], keys[i:i + batch], rec_steps, decoder,
+                    nonces=nonces[i:i + batch])
         accs.append(bit_accuracy(logits, bits[i:i + batch]))
     return float(np.mean(accs))
 
@@ -54,6 +56,8 @@ def main():
     ap.add_argument("--hide-list", default="10,25,50,100")
     ap.add_argument("--rec-list", default="10,25,50,100")
     ap.add_argument("--strength", type=float, default=1.0)
+    ap.add_argument("--pixel-res", type=int, default=None,
+                    help="cover 像素尺寸；由 eval_setup 按 checkpoint 自动匹配")
     ap.add_argument("--nonce-start", type=int, default=0)
     ap.add_argument("--out", default="results/steps_grid.md")
     ap.add_argument("--seed", type=int, default=11)
@@ -62,41 +66,42 @@ def main():
     hide_list, rec_list = parse_ints(args.hide_list), parse_ints(args.rec_list)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    dec_ckpt = torch.load(args.decoder_ckpt, map_location=device, weights_only=True)
-    cfg = dec_ckpt["config"]
-    stego = load_stego(args.ddpm_ckpt, device, n_bits=cfg["n_bits"], ecc_reps=cfg["ecc"],
-                       bins_per_bit=cfg["bpb"], n_check_bits=cfg["n_check_bits"])
+    stego, io, loader, cfg, pixel_res = eval_setup(
+        args.ddpm_ckpt, args.data_root, args.batch, device, args.decoder_ckpt)
+    print(f"[space] {io.describe()}  pixel_res={pixel_res}")
     dec = RingDecoder(2 * cfg["n_pairs"],
                       cfg["n_bits"] * cfg["ecc"] + cfg["n_check_bits"]).to(device)
-    dec.load_state_dict(dec_ckpt["decoder"])
+    dec.load_state_dict(torch.load(args.decoder_ckpt, map_location=device,
+                                   weights_only=True)["decoder"])
     dec.eval()
 
-    loader = cifar_loader(args.data_root, train=False, batch_size=args.batch)
     covers, bits, keys, nonces = make_eval_inputs(
         loader, args.n, cfg["n_bits"], device, nonce_start=args.nonce_start)
 
     stegos_by_sh, quality = {}, {}
     for sh in hide_list:
         sg = torch.cat([
-            stego.hide(covers[i:i + args.batch], bits[i:i + args.batch],
-                       keys[i:i + args.batch], sh, args.strength,
-                       nonces=nonces[i:i + args.batch])
+            io.hide(covers[i:i + args.batch], bits[i:i + args.batch],
+                    keys[i:i + args.batch], sh, args.strength,
+                    nonces=nonces[i:i + args.batch])
             for i in range(0, args.n, args.batch)
         ])
         stegos_by_sh[sh] = sg
-        quality[sh] = (psnr(sg, covers), ssim(sg, covers))
+        sg_px = io.to_pixels(sg)
+        quality[sh] = (psnr(sg_px, covers), ssim(sg_px, covers))
         print(f"S_hide={sh}: PSNR {quality[sh][0]:.2f} dB, SSIM {quality[sh][1]:.4f}",
               flush=True)
 
     acc = {}
     for sh in hide_list:
         sg = stegos_by_sh[sh]
-        sg_j = diff_jpeg(sg, 50)
+        # JPEG 定义在像素域：隐空间模型先解码再加失真、再编码回去
+        sg_j = io.attack(sg, lambda t: diff_jpeg(t, 50))
         for sr in rec_list:
             acc[("clean", sh, sr)] = decode_acc(stego, sg, keys, nonces, sr, dec,
-                                                bits, args.batch)
+                                                bits, args.batch, io=io)
             acc[("jpeg50", sh, sr)] = decode_acc(stego, sg_j, keys, nonces, sr, dec,
-                                                 bits, args.batch)
+                                                 bits, args.batch, io=io)
             print(f"S_hide={sh} S_rec={sr}: clean {acc[('clean', sh, sr)]:.3f} "
                   f"jpeg50 {acc[('jpeg50', sh, sr)]:.3f}", flush=True)
 

@@ -1,0 +1,13 @@
+  [vae] VAE[native] ch=4 down=4x (2^2) scale=1.00000 src=D:\homework\face recognition\deeplearning\diffusion\checkpoints_tiny_ldm\vae32.pt
+[space] 空间=隐空间 (4, 8, 8)，VAE=VAE[native] ch=4 down=4x (2^2) scale=1.00000 src=D:\homework\face recognition\deeplearning\diffusion\checkpoints_tiny_ldm\vae32.pt pixel_res=32
+[capacity] {'z_shape': (4, 8, 8), 'avail_bins_single_channel': 14, 'avail_pairs_all_channels': 56, 'r_min': 1, 'r_max': 3, 'slots': 12, 'obs_per_bit_ceiling': 4.666666666666667}
+Files already downloaded and verified
+[warn] 隐空间模型通常配 --resize 64 训练；当前用 32×32 cover，若 VAE 是按 64 训练的请加 --pixel-res 64
+[latent] 无嵌入往返上限 PSNR 16.96 dB
+strength=0.005  : PSNR  14.41 dB SSIM 0.2431 LPIPS n/a | mf 0.438 dec 0.375 jpeg50 0.438
+strength=0.02   : PSNR  14.26 dB SSIM 0.2309 LPIPS n/a | mf 0.562 dec 0.375 jpeg50 0.375
+strength=0.05   : PSNR  13.66 dB SSIM 0.1944 LPIPS n/a | mf 0.625 dec 0.375 jpeg50 0.438
+strength=0.1    : PSNR  12.60 dB SSIM 0.1456 LPIPS n/a | mf 0.688 dec 0.438 jpeg50 0.438
+strength=0.3    : PSNR  10.44 dB SSIM 0.0865 LPIPS n/a | mf 0.875 dec 0.625 jpeg50 0.438
+strength=1.0    : PSNR   9.63 dB SSIM 0.0735 LPIPS n/a | mf 1.000 dec 0.750 jpeg50 0.375
+saved -> D:\homework\face recognition\deeplearning\diffusion\results_tiny_ldm\strip32.md

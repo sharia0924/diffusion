@@ -1,0 +1,58 @@
+{
+  "space": "空间=隐空间 (4, 8, 8)，VAE=VAE[native] ch=4 down=4x (2^2) scale=1.00000 src=D:\\homework\\face recognition\\deeplearning\\diffusion\\checkpoints_tiny_ldm\\vae32.pt",
+  "n": 4,
+  "n_bits": 4,
+  "pixel_baseline": false,
+  "rows": [
+    {
+      "strength": 0.02,
+      "psnr": 14.266354882571575,
+      "ssim": 0.24011175334453583,
+      "lpips": null,
+      "dec_clean": 0.4375,
+      "dec_jpeg50": 0.4375,
+      "mf_clean": 0.375
+    },
+    {
+      "strength": 0.05,
+      "psnr": 13.624250903861771,
+      "ssim": 0.20891422033309937,
+      "lpips": null,
+      "dec_clean": 0.4375,
+      "dec_jpeg50": 0.4375,
+      "mf_clean": 0.5
+    },
+    {
+      "strength": 0.1,
+      "psnr": 12.299033937898582,
+      "ssim": 0.15091946721076965,
+      "lpips": null,
+      "dec_clean": 0.4375,
+      "dec_jpeg50": 0.4375,
+      "mf_clean": 0.625
+    },
+    {
+      "strength": 0.3,
+      "psnr": 9.517634743311275,
+      "ssim": 0.08259537816047668,
+      "lpips": null,
+      "dec_clean": 0.4375,
+      "dec_jpeg50": 0.4375,
+      "mf_clean": 0.75
+    }
+  ],
+  "vae_roundtrip_psnr": 16.96054867050852,
+  "capacity": {
+    "z_shape": [
+      4,
+      8,
+      8
+    ],
+    "avail_bins_single_channel": 14,
+    "avail_pairs_all_channels": 56,
+    "r_min": 1,
+    "r_max": 3,
+    "slots": 4,
+    "obs_per_bit_ceiling": 14.0
+  }
+}

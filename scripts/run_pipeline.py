@@ -1,28 +1,44 @@
 """一键实验流水线：DDPM 预训练 → 解码器训练 → 三大护栏评测（P1/P2/P3）+ 鲁棒性全表。
 
+另有 **LDM 隐空间流水线**（`--ldm`，推荐）：VAE → 隐空间 DDPM → 隐空间解码器 → 评测。
+像素空间整条链路的上限只有 18.8 dB，隐空间路线可达 35 dB 以上。
+
 用法:
+  # 像素空间
   python scripts/run_pipeline.py                          # 全流程（训练+全部评测）
   python scripts/run_pipeline.py --stages ddpm decoder    # 只训练
   python scripts/run_pipeline.py --stages p1 p2 p3        # 只评测（需已有 checkpoint）
   python scripts/run_pipeline.py --stages all --tiny      # 冒烟验证全流程（数分钟）
-  python scripts/run_pipeline.py --stages decoder --force # 强制重训解码器
-  python scripts/run_pipeline.py --stages all --decoder-ablation  # 额外训练消融对照并评测
   python scripts/run_pipeline.py --stages ddpm --ddpm-epochs 300  # 加长训练（自动续训）
 
-阶段:
+  # LDM 隐空间（一条命令跑完）
+  python scripts/run_pipeline.py --ldm --stages all
+  python scripts/run_pipeline.py --ldm --stages all --finish        # 跑满全部 epoch
+  python scripts/run_pipeline.py --ldm --stages vae latent_ddpm     # 只训练前两段
+  python scripts/run_pipeline.py --ldm --stages latent_robust latent_p1 latent_p2 latent_p3
+
+阶段（像素空间）:
   ddpm    预训练基础 DDPM            -> checkpoints/ddpm_cifar.pt
   decoder 训练复原解码器             -> checkpoints/decoder.pt (+_best)
-          (--decoder-ablation 额外训 --sched-noise-prob 0 对照 -> decoder_ctrl.pt)
   robust  鲁棒性全表                 -> results/robustness.md
   p1      密钥安全表                 -> results/key_security.md
   p2      步数不对称网格+失配曲线    -> results/steps_grid.md, step_mismatch.md
   p3      再生攻击网格+鲁棒性前沿    -> results/regen.md, frontier.md
 
+阶段（LDM，--ldm；产物带 _l32 后缀以免覆盖像素空间结果）:
+  vae             训练 VAE（隐空间）        -> checkpoints/vae32.pt
+  latent_ddpm     隐空间扩散模型            -> checkpoints/ddpm_latent32.pt
+  latent_decoder  隐空间复原解码器(加性注入) -> checkpoints/decoder_latent32_best.pt
+  ldm_eval        端到端验收                -> results/ldm_pipeline32.md
+  strength_sweep  工作点扫描（质量vs准确率） -> results/strip32.md
+  latent_robust   鲁棒性全表                -> results/robustness_l32.md
+  latent_p1/p2/p3 三大护栏                  -> results/*_l32.md
+
 特性:
   - **解释器自适应**：若当前解释器没有 torch，自动切换到检测到的可用 conda 环境
     （可用 --python 显式指定），避免 `python` 指向无 torch 的 base 环境时直接失败；
-  - 已完成阶段自动跳过（--force 重跑）；ddpm 阶段按 checkpoint 里的 epoch 数
-    自动续训（train_ddpm.py 的 <out>.last.pt 断点）；
+  - 已完成阶段自动跳过（--force 重跑）；ddpm/vae 阶段按 checkpoint 里的 epoch 数
+    自动续训（`<out>.last.pt` 断点）；
   - 每阶段日志写入 results/logs/；结束生成 results/pipeline_summary.md；
     任一阶段失败立即终止。
 """
@@ -35,6 +51,9 @@ import time
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STAGE_ORDER = ["ddpm", "decoder", "robust", "p1", "p2", "p3"]
+# LDM（隐空间）阶段：VAE -> 隐空间 DDPM -> 隐空间解码器 -> 评测
+LDM_STAGE_ORDER = ["vae", "latent_ddpm", "latent_decoder", "ldm_eval", "strength_sweep",
+                   "latent_robust", "latent_p1", "latent_p2", "latent_p3"]
 
 # 常见 conda 环境候选：本机 `python` 可能是没有 torch 的 base
 _CONDA_ROOTS = [
@@ -142,6 +161,24 @@ def _ddpm_epochs_done(ckpt: str) -> int:
         return 0
 
 
+def _need_more(out_ckpt: str, target_epochs: int, suffix: str, key: str) -> bool:
+    """训练类阶段的续训判定：断点里的 epoch 数 < 目标 -> 还需要训练。
+
+    用于 vae / latent_ddpm 这类"目标 epoch 会变"的阶段，避免 done_marker
+    在目标提高后仍然跳过训练。
+    """
+    for p in (out_ckpt.replace(".pt", suffix), out_ckpt):
+        if os.path.exists(p):
+            try:
+                import torch
+                st = torch.load(p, map_location="cpu", weights_only=False)
+                done = int(st.get(key, st.get("epochs_done", 0)) or 0)
+                return done < target_epochs
+            except Exception:
+                continue
+    return True
+
+
 def main():
     _force_tolerant_stdio()
     ap = argparse.ArgumentParser(description=__doc__,
@@ -196,6 +233,35 @@ def main():
     ap.add_argument("--geom-prob", type=float, default=0.25,
                     help="解码器训练随机失真中几何攻击的条件概率")
 
+    # ---------------- LDM（隐空间）参数 ----------------
+    ap.add_argument("--ldm", action="store_true",
+                    help="启用 LDM 隐空间流水线（vae -> latent_ddpm -> latent_decoder -> 评测）")
+    ap.add_argument("--finish", action="store_true",
+                    help="LDM 下跑满全部 epoch（默认用预算内能跑完的 epoch 数）")
+    ap.add_argument("--ldm-budget-min", type=float, default=360.0,
+                    help="LDM 训练预算（分钟）；据此自动决定 VAE/DDPM 的 epoch 数")
+    ap.add_argument("--vae-epochs", type=int, default=25)
+    ap.add_argument("--vae-batch", type=int, default=64)
+    ap.add_argument("--vae-base", type=int, default=64)
+    ap.add_argument("--vae-z-ch", type=int, default=4)
+    ap.add_argument("--vae-downsample", type=int, default=1,
+                    help="VAE 下采样级数（每级 ×2）；1 -> 32×32 latent（容量达标）")
+    ap.add_argument("--vae-ch-mults", default="1,2")
+    ap.add_argument("--vae-kl-weight", type=float, default=1e-4)
+    ap.add_argument("--vae-resize", type=int, default=64,
+                    help="VAE 训练的输入像素尺寸；评测必须用同一尺寸")
+    ap.add_argument("--latent-ddpm-epochs", type=int, default=100)
+    ap.add_argument("--latent-ddpm-batch", type=int, default=64)
+    ap.add_argument("--latent-decoder-steps", type=int, default=1000)
+    ap.add_argument("--latent-decoder-batch", type=int, default=16)
+    ap.add_argument("--inject-mode", choices=["add", "replace"], default="add",
+                    help="注入方式；隐空间必须用 add（replace 实测一加注入 PSNR 即崩到 15dB）")
+    ap.add_argument("--latent-strength-min", type=float, default=0.05,
+                    help="隐空间解码器训练的 strength 下界（工作点在低强度区）")
+    ap.add_argument("--latent-strength-max", type=float, default=0.4,
+                    help="隐空间解码器训练的 strength 上界")
+    ap.add_argument("--sweep-strengths", default="0.005,0.02,0.05,0.1,0.3,1.0")
+
     # 各评测专属网格
     ap.add_argument("--grid-hide-list", default="10,25,50,100")
     ap.add_argument("--grid-rec-list", default="10,25,50,100")
@@ -205,7 +271,7 @@ def main():
     ap.add_argument("--frontier-strengths", default="0.5,0.75,1.0,1.25,1.5,2.0")
     args = ap.parse_args()
 
-    if args.tiny:  # 冒烟: 全部缩到最小, 数分钟跑完全流程
+    if args.tiny:  # 冒烟: 全部缩到最小
         args.ddpm_epochs, args.ddpm_batch = min(args.ddpm_epochs, 1), min(args.ddpm_batch, 64)
         args.decoder_steps, args.decoder_batch = min(args.decoder_steps, 30), min(args.decoder_batch, 4)
         args.hide_steps = args.rec_steps = 25
@@ -216,6 +282,13 @@ def main():
         args.mismatch_rec_list = "4,10,25"
         args.regen_t_regs, args.regen_steps_list = "400", "25"
         args.frontier_strengths = "0.5,1.0"
+        # LDM 也缩到冒烟规模
+        args.vae_epochs = min(args.vae_epochs, 2)
+        args.vae_base = min(args.vae_base, 32)
+        args.vae_resize = 32
+        args.vae_downsample = 1
+        args.latent_ddpm_epochs, args.latent_ddpm_batch = 2, 64
+        args.latent_decoder_steps, args.latent_decoder_batch = 30, 4
 
     args.ckpt_dir = os.path.abspath(args.ckpt_dir)
     args.results_dir = os.path.abspath(args.results_dir)
@@ -225,14 +298,14 @@ def main():
 
     python = pick_python(args.python)
 
-    stages = STAGE_ORDER if "all" in args.stages else [s for s in STAGE_ORDER
-                                                       if s in args.stages]
+    order = LDM_STAGE_ORDER if args.ldm else STAGE_ORDER
+    stages = order if "all" in args.stages else [s for s in order if s in args.stages]
     if not stages:
-        raise SystemExit("没有选择任何阶段")
-    print(f"[pipeline] 阶段: {' -> '.join(stages)}  "
-          f"(ckpt={args.ckpt_dir}, results={args.results_dir}"
-          f"{', tiny' if args.tiny else ''})")
-    print(f"[pipeline] python={python}")
+        raise SystemExit(f"没有选择任何阶段（可选: {order}）")
+    print(f"[pipeline] 模式: {'LDM 隐空间' if args.ldm else '像素空间'}  "
+          f"阶段: {' -> '.join(stages)}")
+    print(f"[pipeline] ckpt={args.ckpt_dir} results={args.results_dir} "
+          f"tiny={args.tiny} python={python}")
 
     ddpm_ckpt = os.path.join(args.ckpt_dir, "ddpm_cifar.pt")
     summary: list[tuple[str, str, float, str]] = []
@@ -377,15 +450,176 @@ def main():
                             "--strengths", args.frontier_strengths],
                   done_marker=out_f)
 
+    # ================= LDM（隐空间）流水线 =================
+    if args.ldm:
+        vae_ckpt = os.path.join(args.ckpt_dir, "vae32.pt")
+        lat_ddpm = os.path.join(args.ckpt_dir, "ddpm_latent32.pt")
+        lat_dec = os.path.join(args.ckpt_dir, "decoder_latent32.pt")
+        lat_dec_best = lat_dec.replace(".pt", "_best.pt")
+        lat_common = ["--ddpm-ckpt", lat_ddpm, "--data-root", args.data_root,
+                      "--pixel-res", str(args.vae_resize)]
+
+        def lat_decoder_ckpt() -> str:
+            return lat_dec_best if os.path.exists(lat_dec_best) else lat_dec
+
+        def vae_epochs_done(ckpt: str) -> int:
+            p = ckpt.replace(".pt", ".last.pt")
+            if not os.path.exists(p):
+                return 0
+            try:
+                import torch
+                return int(torch.load(p, map_location="cpu",
+                                      weights_only=False).get("epoch", 0))
+            except Exception:
+                return 0
+
+        if "vae" in stages:
+            print(f"[vae] 已完成 {vae_epochs_done(vae_ckpt)}/{args.vae_epochs} epoch")
+            run_stage("vae", "train_vae.py",
+                      ["--data-root", args.data_root, "--out", vae_ckpt,
+                       "--epochs", str(args.vae_epochs),
+                       "--batch-size", str(args.vae_batch),
+                       "--base", str(args.vae_base), "--z-ch", str(args.vae_z_ch),
+                       "--downsample", str(args.vae_downsample),
+                       "--ch-mults", args.vae_ch_mults,
+                       "--kl-weight", str(args.vae_kl_weight),
+                       "--resize", str(args.vae_resize),
+                       "--save-every", "2", "--log-every", "200"]
+                      + (["--tiny"] if args.tiny else []),
+                      done_marker=None if _need_more(vae_ckpt, args.vae_epochs, ".last.pt",
+                                                     "epoch")
+                      else vae_ckpt)
+
+        if "latent_ddpm" in stages:
+            if not os.path.exists(vae_ckpt) and not os.path.exists(
+                    vae_ckpt.replace(".pt", ".last.pt")):
+                raise SystemExit(f"[pipeline] 缺少 VAE checkpoint: {vae_ckpt}")
+            vck = vae_ckpt if os.path.exists(vae_ckpt) else vae_ckpt.replace(".pt", ".last.pt")
+            run_stage("latent_ddpm", "train_ddpm.py",
+                      ["--data-root", args.data_root, "--out", lat_ddpm,
+                       "--epochs", str(args.latent_ddpm_epochs),
+                       "--batch-size", str(args.latent_ddpm_batch),
+                       "--save-every", "10", "--log-every", "200",
+                       "--vae-backend", "native", "--vae-ckpt", vck,
+                       "--rebuild-latent-cache"]
+                      + (["--tiny"] if args.tiny else []),
+                      done_marker=None if _need_more(lat_ddpm, args.latent_ddpm_epochs,
+                                                     ".last.pt", "epoch")
+                      else lat_ddpm)
+
+        if "latent_decoder" in stages:
+            run_stage("latent_decoder", "train_decoder.py",
+                      ["--ddpm-ckpt", lat_ddpm, "--out", lat_dec,
+                       "--data-root", args.data_root,
+                       "--steps", str(args.latent_decoder_steps),
+                       "--batch-size", str(args.latent_decoder_batch),
+                       "--inject-mode", args.inject_mode,
+                       "--strength-min", str(args.latent_strength_min),
+                       "--strength-max", str(args.latent_strength_max),
+                       "--sched-noise-prob", str(args.sched_noise_prob),
+                       "--geom-prob", str(args.geom_prob),
+                       "--hide-steps", str(args.hide_steps),
+                       "--rec-steps", str(args.rec_steps),
+                       "--eval-every", "250"]
+                      + (["--tiny"] if args.tiny else []),
+                      done_marker=lat_dec)
+
+        if "ldm_eval" in stages:
+            out = os.path.join(args.results_dir, "ldm_pipeline32.md")
+            run_stage("ldm_eval", "eval_ldm_pipeline.py",
+                      lat_common + ["--decoder-ckpt", lat_decoder_ckpt(), "--out", out,
+                                    "--n", str(args.n_grid), "--batch", str(args.batch_eval),
+                                    "--hide-steps", str(args.hide_steps),
+                                    "--rec-steps", str(args.rec_steps),
+                                    "--strengths", "0.02,0.05,0.1,0.3"],
+                      done_marker=out)
+
+        if "strength_sweep" in stages:
+            out = os.path.join(args.results_dir, "strip32.md")
+            run_stage("strength_sweep", "eval_strength_sweep.py",
+                      lat_common + ["--decoder-ckpt", lat_decoder_ckpt(), "--out", out,
+                                    "--n", str(args.n_grid), "--batch", str(args.batch_eval),
+                                    "--hide-steps", str(args.hide_steps),
+                                    "--rec-steps", str(args.rec_steps),
+                                    "--strengths", args.sweep_strengths],
+                      done_marker=out)
+
+        if "latent_robust" in stages:
+            out = os.path.join(args.results_dir, "robustness_l32.md")
+            run_stage("latent_robust", "eval_robustness.py",
+                      lat_common + ["--decoder-ckpt", lat_decoder_ckpt(), "--out", out,
+                                    "--n", str(args.n_robust),
+                                    "--batch", str(args.batch_eval),
+                                    "--hide-steps", str(args.hide_steps),
+                                    "--rec-steps", str(args.rec_steps),
+                                    "--strength", str(args.latent_strength_max)],
+                      done_marker=out)
+
+        if "latent_p1" in stages:
+            out = os.path.join(args.results_dir, "key_security_l32.md")
+            run_stage("latent_p1", "eval_key_security.py",
+                      lat_common + ["--decoder-ckpt", lat_decoder_ckpt(), "--out", out,
+                                    "--n", str(args.n_keysec),
+                                    "--batch", str(args.batch_eval),
+                                    "--n-wrong", str(args.n_wrong),
+                                    "--hide-steps", str(args.hide_steps),
+                                    "--rec-steps", str(args.rec_steps),
+                                    "--strength", str(args.latent_strength_max)],
+                      done_marker=out)
+
+        if "latent_p2" in stages:
+            out_g = os.path.join(args.results_dir, "steps_grid_l32.md")
+            run_stage("latent_p2-grid", "eval_steps_grid.py",
+                      lat_common + ["--decoder-ckpt", lat_decoder_ckpt(), "--out", out_g,
+                                    "--n", str(args.n_grid),
+                                    "--batch", str(args.batch_eval),
+                                    "--hide-list", args.grid_hide_list,
+                                    "--rec-list", args.grid_rec_list,
+                                    "--strength", str(args.latent_strength_max)],
+                      done_marker=out_g)
+            out_m = os.path.join(args.results_dir, "step_mismatch_l32.md")
+            run_stage("latent_p2-mismatch", "eval_step_mismatch.py",
+                      lat_common + ["--decoder-ckpt", lat_decoder_ckpt(), "--out", out_m,
+                                    "--n", str(args.n_grid),
+                                    "--batch", str(args.batch_eval),
+                                    "--rec-list", args.mismatch_rec_list,
+                                    "--hide-steps", str(args.hide_steps),
+                                    "--strength", str(args.latent_strength_max)],
+                      done_marker=out_m)
+
+        if "latent_p3" in stages:
+            out_r = os.path.join(args.results_dir, "regen_l32.md")
+            run_stage("latent_p3-regen", "eval_regen.py",
+                      lat_common + ["--decoder-ckpt", lat_decoder_ckpt(), "--out", out_r,
+                                    "--n", str(args.n_regen),
+                                    "--batch", str(args.batch_eval),
+                                    "--rec-steps", str(args.rec_steps),
+                                    "--t-regs", args.regen_t_regs,
+                                    "--regen-steps-list", args.regen_steps_list,
+                                    "--hide-steps", str(args.hide_steps),
+                                    "--strength", str(args.latent_strength_max)],
+                      done_marker=out_r)
+
     # ---------------- 汇总 ----------------
     summary_path = os.path.join(args.results_dir, "pipeline_summary.md")
     with open(summary_path, "w", encoding="utf-8") as f:
         f.write("# 流水线运行汇总\n\n"
+                f"- 模式: **{'LDM 隐空间' if args.ldm else '像素空间'}**\n"
                 f"- 阶段: {' -> '.join(stages)}\n- tiny: {args.tiny}\n"
-                f"- 解释器: `{python}`\n"
-                f"- DDPM 目标 epoch: {args.ddpm_epochs}（当前 checkpoint 已完成 "
-                f"{_ddpm_epochs_done(ddpm_ckpt)}）\n"
-                f"- nonce 协议: `H(key || nonce-start+i)`（自包含, 不依赖 cover）, "
+                f"- 解释器: `{python}`\n")
+        if args.ldm:
+            f.write(f"- VAE: resize={args.vae_resize} downsample={args.vae_downsample} "
+                    f"(latent {args.vae_resize // (2 ** args.vae_downsample)}×…) "
+                    f"epochs={args.vae_epochs}\n"
+                    f"- 隐空间 DDPM: epochs={args.latent_ddpm_epochs}, "
+                    f"batch={args.latent_ddpm_batch}\n"
+                    f"- 隐空间解码器: steps={args.latent_decoder_steps}, "
+                    f"inject_mode=**{args.inject_mode}**, "
+                    f"strength∈[{args.latent_strength_min},{args.latent_strength_max}]\n")
+        else:
+            f.write(f"- DDPM 目标 epoch: {args.ddpm_epochs}（当前 checkpoint 已完成 "
+                    f"{_ddpm_epochs_done(ddpm_ckpt)}）\n")
+        f.write(f"- nonce 协议: `H(key || nonce-start+i)`（自包含, 不依赖 cover）, "
                 f"nonce-start={args.nonce_start}\n"
                 f"- 几何攻击: 真裁剪/旋转/缩放/平移（crop 不再是 torch.roll 循环平移）\n"
                 f"- 再生攻击代价: 同时报告 PSNR vs cover 与 vs stego\n\n"

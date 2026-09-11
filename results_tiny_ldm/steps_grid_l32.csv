@@ -1,0 +1,9 @@
+attack,s_hide,s_rec,bit_acc
+clean,4,4,0.6250
+jpeg50,4,4,0.3750
+clean,4,10,0.6250
+jpeg50,4,10,0.4375
+clean,10,4,0.5625
+jpeg50,10,4,0.3750
+clean,10,10,0.5000
+jpeg50,10,10,0.5625

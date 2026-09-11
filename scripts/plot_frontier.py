@@ -23,6 +23,7 @@ from krd.metrics import bit_accuracy, psnr
 from krd.perceptual import lpips
 from krd.utils import seed_everything
 from scripts.eval_common import cifar_loader, make_eval_inputs
+from scripts.eval_setup import eval_setup
 from scripts.eval_steps_grid import decode_acc
 from scripts.train_decoder import load_stego
 
@@ -37,6 +38,8 @@ def main():
     ap.add_argument("--rec-steps", type=int, default=50)
     ap.add_argument("--hide-steps", type=int, default=50)
     ap.add_argument("--strengths", default="0.5,0.75,1.0,1.25,1.5,2.0")
+    ap.add_argument("--pixel-res", type=int, default=None,
+                    help="cover 像素尺寸；由 eval_setup 按 checkpoint 自动匹配")
     ap.add_argument("--nonce-start", type=int, default=0)
     ap.add_argument("--out", default="results/frontier.md")
     ap.add_argument("--seed", type=int, default=19)
@@ -45,20 +48,15 @@ def main():
     strengths = [float(v) for v in args.strengths.split(",")]
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    dec_ckpt = torch.load(args.decoder_ckpt, map_location=device, weights_only=True)
-    cfg = dec_ckpt["config"]
-    stego = load_stego(args.ddpm_ckpt, device, n_bits=cfg["n_bits"], ecc_reps=cfg["ecc"],
-                       bins_per_bit=cfg["bpb"], n_check_bits=cfg["n_check_bits"])
+    stego, io, loader, cfg, pixel_res = eval_setup(
+        args.ddpm_ckpt, args.data_root, args.batch, device, args.decoder_ckpt)
+    print(f"[space] {io.describe()}  pixel_res={pixel_res}")
     dec = RingDecoder(2 * cfg["n_pairs"],
                       cfg["n_bits"] * cfg["ecc"] + cfg["n_check_bits"]).to(device)
-    dec.load_state_dict(dec_ckpt["decoder"])
+    dec.load_state_dict(torch.load(args.decoder_ckpt, map_location=device,
+                                   weights_only=True)["decoder"])
     dec.eval()
 
-    tf = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-    ])
-    loader = cifar_loader(args.data_root, train=False, batch_size=args.batch)
     covers, bits, keys, nonces = make_eval_inputs(
         loader, args.n, cfg["n_bits"], device, nonce_start=args.nonce_start)
 
@@ -68,17 +66,18 @@ def main():
     rows = []
     for s in strengths:
         sg = torch.cat([
-            stego.hide(covers[i:i + args.batch], bits[i:i + args.batch],
-                       keys[i:i + args.batch], args.hide_steps, s,
-                       nonces=nonces[i:i + args.batch])
+            io.hide(covers[i:i + args.batch], bits[i:i + args.batch],
+                    keys[i:i + args.batch], args.hide_steps, s,
+                    nonces=nonces[i:i + args.batch])
             for i in range(0, args.n, args.batch)
         ])
-        p = psnr(sg, covers)
-        row = {"strength": s, "psnr": p, "lpips": lpips(sg, covers)}
+        sg_px = io.to_pixels(sg)
+        p = psnr(sg_px, covers)
+        row = {"strength": s, "psnr": p, "lpips": lpips(sg_px, covers)}
         for name, atk, param in eval_attacks:
-            x_in = sg if atk == "clean" else apply_attack(sg, atk, param)
+            x_in = sg if atk == "clean" else io.attack(sg, lambda t: apply_attack(t, atk, param))
             row[name] = decode_acc(stego, x_in, keys, nonces, args.rec_steps,
-                                   dec, bits, args.batch)
+                                   dec, bits, args.batch, io=io)
         rows.append(row)
         lp_s = "n/a" if row["lpips"] is None else f"{row['lpips']:.4f}"
         print(f"strength={s}: PSNR {p:.2f} dB LPIPS {lp_s} | " +

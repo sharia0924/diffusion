@@ -1,0 +1,8 @@
+Files already downloaded and verified
+[latent] 编码数据集 -> cache/latents\latents_1ba8e1d09ce3442e_tiny.pt（VAE[native] ch=4 down=4x (2^2) scale=1.00000 src=D:\homework\face recognition\deeplearning\diffusion\checkpoints_tiny_ldm\vae32.pt）
+  [latent-cache] 20/32 batch
+  [latent-cache] saved (2048, 4, 8, 8) -> cache/latents\latents_1ba8e1d09ce3442e_tiny.pt
+[latent] 几何 (4, 8, 8)  {'n': 2048, 'z_ch': 4, 'h': 8, 'w': 8, 'vae': 'VAE[native] ch=4 down=4x (2^2) scale=1.00000 src=D:\\homework\\face recognition\\deeplearning\\diffusion\\checkpoints_tiny_ldm\\vae32.pt', 'mean': 0.05990196764469147, 'std': 1.4965928792953491, 'absmax': 8.966994285583496}
+[setup] device=cuda amp=False batch=64 in_ch=4 vae=native grad_accum=1 -> effective_batch=64 num_workers=2 channels_last=False
+[setup] gpu=NVIDIA GeForce GTX 1650 mem=4.0GiB
+saved -> D:\homework\face recognition\deeplearning\diffusion\checkpoints_tiny_ldm\ddpm_latent32.pt (2 epoch; 续训状态 D:\homework\face recognition\deeplearning\diffusion\checkpoints_tiny_ldm\ddpm_latent32.last.pt)

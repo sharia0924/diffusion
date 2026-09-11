@@ -42,6 +42,8 @@ def main():
     ap.add_argument("--n-wrong", type=int, default=200)
     ap.add_argument("--hide-steps", type=int, default=50)
     ap.add_argument("--rec-steps", type=int, default=50)
+    ap.add_argument("--pixel-res", type=int, default=None,
+                    help="cover 像素尺寸；隐空间模型由 eval_setup 自动匹配")
     ap.add_argument("--strength", type=float, default=1.0)
     ap.add_argument("--auc-ns", default="1,2,4,8,16,32")
     ap.add_argument("--nonce-start", type=int, default=0)
@@ -54,7 +56,10 @@ def main():
     auc_ns = [int(v) for v in args.auc_ns.split(",")]
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    stego = load_stego(args.ddpm_ckpt, device)
+    from scripts.eval_setup import eval_setup
+    stego, io, loader, cfg, pixel_res = eval_setup(
+        args.ddpm_ckpt, args.data_root, args.batch, device, args.decoder_ckpt)
+    print(f"[space] {io.describe()}  pixel_res={pixel_res}")
 
     dec_ckpt = torch.load(args.decoder_ckpt, map_location=device, weights_only=True) \
         if os.path.exists(args.decoder_ckpt) else None
@@ -69,30 +74,33 @@ def main():
     else:
         print("WARNING: 未找到解码器 checkpoint，跳过 A 部分（BER 分布）")
 
-    loader = cifar_loader(args.data_root, train=False, batch_size=args.batch)
     covers, bits_all, keys_all, nonces = make_eval_inputs(
         loader, args.n, stego.n_bits, device, nonce_start=args.nonce_start)
 
     stegos = torch.cat([
-        stego.hide(covers[i:i + args.batch], bits_all[i:i + args.batch],
+        io.hide(covers[i:i + args.batch], bits_all[i:i + args.batch],
                    keys_all[i:i + args.batch], args.hide_steps, args.strength,
                    nonces=nonces[i:i + args.batch])
         for i in range(0, args.n, args.batch)
     ])
 
-    p_stego = psnr(stegos, covers)
-    lp_stego = lpips(stegos, covers)
+    # 像素级指标必须在解码回像素后计算（隐空间模型下 stegos 是潜变量）
+    stegos_px = io.to_pixels(stegos)
+    p_stego = psnr(stegos_px, covers)
+    lp_stego = lpips(stegos_px, covers)
+    _ssim = ssim(stegos_px, covers)
     lines = ["# 密钥安全性评测（P1）\n",
              f"- 样本数 n={args.n}, S_hide={args.hide_steps}, S_rec={args.rec_steps}, "
              f"strength={args.strength}",
-             f"- 载密图基线: PSNR {p_stego:.2f} dB / SSIM {ssim(stegos, covers):.4f} / "
+             f"- {io.describe()}",
+             f"- 载密图基线: PSNR {p_stego:.2f} dB / SSIM {_ssim:.4f} / "
              f"LPIPS {'n/a' if lp_stego is None else f'{lp_stego:.4f}'}",
              f"- nonce 协议: `nonce_i = H(key || nonce_start+i)`（自包含, 不依赖 cover）\n"]
     csv_rows = [("stego_psnr", f"{p_stego:.4f}"),
-                ("stego_ssim", f"{ssim(stegos, covers):.4f}"),
+                ("stego_ssim", f"{_ssim:.4f}"),
                 ("stego_lpips", "" if lp_stego is None else f"{lp_stego:.6f}")]
 
-    x_T = stego.invert_latents(stegos, args.rec_steps)
+    x_T = io.invert(stegos, args.rec_steps)
 
     # ---------- A. 错密钥 / 近密钥 BER 分布 ----------
     if decoder is not None:
@@ -111,7 +119,7 @@ def main():
 
         true_accs = []
         for i in range(0, args.n, args.batch):
-            logits = stego.recover(stegos[i:i + args.batch], keys_all[i:i + args.batch],
+            logits = io.recover(stegos[i:i + args.batch], keys_all[i:i + args.batch],
                                    args.rec_steps, decoder, nonces=nonces[i:i + args.batch])
             true_accs.append(((logits > 0).float() == bits_all[i:i + args.batch])
                              .float().mean().item())
@@ -146,14 +154,15 @@ def main():
     attack_key = keys_all[0]
     nonces_shared = [derive_nonces_from_keys([attack_key], start=0)[0]] * args.n   # 无 nonce 基线
     stegos_nn = torch.cat([
-        stego.hide(covers[i:i + args.batch], bits_all[i:i + args.batch],
+        io.hide(covers[i:i + args.batch], bits_all[i:i + args.batch],
                    [attack_key] * args.batch, args.hide_steps, args.strength,
                    nonces=[""] * args.batch)
         for i in range(0, args.n, args.batch)
     ])
 
-    xT_c = stego.invert_latents(covers, args.rec_steps)
-    latents_none = (xT_c, stego.invert_latents(stegos_nn, args.rec_steps))
+    # covers 是像素图，必须编码到模型空间再做反演（隐空间模型下二者维度不同）
+    xT_c = io.invert(io.to_space(covers), args.rec_steps)
+    latents_none = (xT_c, io.invert(stegos_nn, args.rec_steps))
     latents_nonce = (xT_c, x_T)
 
     corr_none = security.residual_template_correlation(

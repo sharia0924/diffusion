@@ -1,0 +1,28 @@
+  [vae] VAE[native] ch=4 down=4x (2^2) scale=1.00000 src=D:\homework\face recognition\deeplearning\diffusion\checkpoints_tiny_ldm\vae32.pt
+Files already downloaded and verified
+[space] 空间=隐空间 (4, 8, 8)，VAE=VAE[native] ch=4 down=4x (2^2) scale=1.00000 src=D:\homework\face recognition\deeplearning\diffusion\checkpoints_tiny_ldm\vae32.pt  pixel_res=32
+[space] 空间=隐空间 (4, 8, 8)，VAE=VAE[native] ch=4 down=4x (2^2) scale=1.00000 src=D:\homework\face recognition\deeplearning\diffusion\checkpoints_tiny_ldm\vae32.pt
+stego quality: PSNR 9.75 dB, SSIM 0.0566, LPIPS n/a (n=4)
+[latent] VAE 往返上限（无嵌入）: PSNR 16.96 dB；容量报告: {'z_shape': (4, 8, 8), 'avail_bins_single_channel': 14, 'avail_pairs_all_channels': 56, 'r_min': 1, 'r_max': 3, 'slots': 4, 'obs_per_bit_ceiling': 14.0}
+         clean: bit-acc 0.688
+        jpeg30: bit-acc 0.438
+        jpeg50: bit-acc 0.438
+        jpeg75: bit-acc 0.438
+     noise0.05: bit-acc 0.438
+     noise0.10: bit-acc 0.438
+       blur3x3: bit-acc 0.438
+       blur5x5: bit-acc 0.438
+     resize0.5: bit-acc 0.438
+     resize0.7: bit-acc 0.500
+    bright+0.1: bit-acc 0.500
+   contrast1.2: bit-acc 0.438
+       crop2px: bit-acc 0.438
+       crop4px: bit-acc 0.438
+ cropresize0.8: bit-acc 0.500
+       rotate5: bit-acc 0.500
+      rotate15: bit-acc 0.562
+  translate2px: bit-acc 0.312
+       zoom1.1: bit-acc 0.562
+         regen: bit-acc 0.750 | cost vs cover 9.36 dB / vs stego 25.20 dB
+     wrong-key: bit-acc 0.500 (期望≈0.5)
+saved -> D:\homework\face recognition\deeplearning\diffusion\results_tiny_ldm\robustness_l32.md, D:\homework\face recognition\deeplearning\diffusion\results_tiny_ldm\robustness_l32.csv

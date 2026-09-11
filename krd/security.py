@@ -130,29 +130,38 @@ def far_at_tau(wrong_dists: torch.Tensor, tau: int) -> float:
 
 # ---------------- 3. 有效密钥空间下界 ----------------
 
-def key_space_bounds(n_pairs: int, res: int = 32, r_min: int = 3,
+def key_space_bounds(n_pairs: int, res: int = 32, r_min: int | None = None,
                      phase_bits: int = 8) -> dict:
     """有效密钥空间（对数）：频点子集选择 × 每频点 phase_bits 位量化相位。
 
     组合学下界；攻击者的现实代价由解码 oracle 决定（见 wrong_key_profile）。
+
+    注意：r_min=None 时按分辨率自适应（见 pattern.default_r_min），
+    且 n_pairs 会被**截断**到该分辨率的环带容量 —— 隐空间（16×16 只有 70 对）
+    上原先会直接抛 "n_pairs 超出环带容量" 而中断整个 P1 评测。
     """
-    from .pattern import _halfplane_bins
+    from .pattern import _halfplane_bins, default_r_min, ring_capacity
+    r_min = default_r_min(res) if r_min is None else int(r_min)
     r_max_cap = res // 2 - 1
-    chosen = None
+    avail_total = ring_capacity(res, r_min)
+    n_pairs_eff = max(1, min(int(n_pairs), avail_total))
+    chosen = r_max_cap
+    n_avail = avail_total
     for rm in range(r_min, r_max_cap + 1):
-        if len(_halfplane_bins(res, r_min, rm)) >= n_pairs:
-            chosen = rm
+        n = len(_halfplane_bins(res, r_min, rm))
+        if n >= n_pairs_eff:
+            chosen, n_avail = rm, n
             break
-    if chosen is None:
-        raise ValueError("n_pairs 超出环带容量")
-    n_avail = len(_halfplane_bins(res, r_min, chosen))
-    log2_choose = (math.lgamma(n_avail + 1) - math.lgamma(n_pairs + 1)
-                   - math.lgamma(n_avail - n_pairs + 1)) / math.log(2)
+    log2_choose = 0.0
+    if n_avail > n_pairs_eff:
+        log2_choose = (math.lgamma(n_avail + 1) - math.lgamma(n_pairs_eff + 1)
+                       - math.lgamma(n_avail - n_pairs_eff + 1)) / math.log(2)
     return {
-        "res": res, "r": (r_min, chosen), "n_avail": n_avail, "n_pairs": n_pairs,
-        "log2_bin_selection": log2_choose,
-        "log2_phases": n_pairs * phase_bits,
-        "log2_total": log2_choose + n_pairs * phase_bits,
+        "res": res, "r": (r_min, chosen), "n_avail": n_avail,
+        "n_pairs": n_pairs_eff, "n_pairs_requested": int(n_pairs),
+        "log2_bin_selection": max(0.0, log2_choose),
+        "log2_phases": n_pairs_eff * phase_bits,
+        "log2_total": max(0.0, log2_choose) + n_pairs_eff * phase_bits,
     }
 
 

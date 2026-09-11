@@ -46,6 +46,8 @@ def main():
     ap.add_argument("--t-regs", default="200,400,600,800,999")
     ap.add_argument("--regen-steps-list", default="25,50")
     ap.add_argument("--hide-steps", type=int, default=50)
+    ap.add_argument("--pixel-res", type=int, default=None,
+                    help="cover 像素尺寸；隐空间模型由 eval_setup 自动匹配")
     ap.add_argument("--strength", type=float, default=1.0)
     ap.add_argument("--nonce-start", type=int, default=0)
     ap.add_argument("--out", default="results/regen.md")
@@ -56,40 +58,41 @@ def main():
     steps_list = sorted({int(v) for v in args.regen_steps_list.split(",")})
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    from scripts.eval_setup import eval_setup
     dec_ckpt = torch.load(args.decoder_ckpt, map_location=device, weights_only=True)
     cfg = dec_ckpt["config"]
-    stego = load_stego(args.ddpm_ckpt, device, n_bits=cfg["n_bits"], ecc_reps=cfg["ecc"],
-                       bins_per_bit=cfg["bpb"], n_check_bits=cfg["n_check_bits"])
+    stego, io, loader, cfg, pixel_res = eval_setup(
+        args.ddpm_ckpt, args.data_root, args.batch, device, args.decoder_ckpt)
+    print(f"[space] {io.describe()}  pixel_res={pixel_res}")
     dec = RingDecoder(2 * cfg["n_pairs"],
                       cfg["n_bits"] * cfg["ecc"] + cfg["n_check_bits"]).to(device)
     dec.load_state_dict(dec_ckpt["decoder"])
     dec.eval()
 
-    loader = cifar_loader(args.data_root, train=False, batch_size=args.batch)
     covers, bits, keys, nonces = make_eval_inputs(
         loader, args.n, cfg["n_bits"], device, nonce_start=args.nonce_start)
 
     sg = torch.cat([
-        stego.hide(covers[i:i + args.batch], bits[i:i + args.batch],
+        io.hide(covers[i:i + args.batch], bits[i:i + args.batch],
                    keys[i:i + args.batch], args.hide_steps, args.strength,
                    nonces=nonces[i:i + args.batch])
         for i in range(0, args.n, args.batch)
     ])
-    print(f"stego 基线: PSNR(vs cover) {psnr(sg, covers):.2f} dB / SSIM {ssim(sg, covers):.4f}",
+    print(f"stego 基线: PSNR(vs cover) {psnr(io.to_pixels(sg), covers):.2f} dB / SSIM {ssim(io.to_pixels(sg), covers):.4f}",
           flush=True)
 
     rows = []
     for steps in steps_list:
         for t_reg in t_regs:
             regen = torch.cat([
-                stego.regeneration_attack(sg[i:i + args.batch], t_reg=t_reg, steps=steps)
+                io.regeneration_attack(sg[i:i + args.batch], t_reg=t_reg, steps=steps)
                 for i in range(0, args.n, args.batch)
             ])
-            d_cover = psnr(regen, covers)       # 真正的攻击代价
-            d_stego = psnr(regen, sg)           # 对载密图的改动幅度
-            lp = lpips(regen, covers)
+            d_cover = psnr(io.to_pixels(regen), covers)   # 真正的攻击代价
+            d_stego = psnr(io.to_pixels(regen), io.to_pixels(sg))  # 对载密图的改动幅度
+            lp = lpips(io.to_pixels(regen), covers)
             ber = 1.0 - decode_acc(stego, regen, keys, nonces, args.rec_steps,
-                                   dec, bits, args.batch)
+                                   dec, bits, args.batch, io=io)
             rows.append((t_reg, steps, d_cover, d_stego, lp, ber))
             lp_s = "n/a" if lp is None else f"{lp:.4f}"
             print(f"regen t={t_reg} steps={steps}: cost(vs cover) {d_cover:.2f} dB | "
@@ -100,7 +103,7 @@ def main():
         f.write("# 扩散再生攻击（预算化：攻击代价以 **cover** 为参照）\n\n")
         f.write(f"- 样本数 n={args.n}, S_hide={args.hide_steps}, S_rec={args.rec_steps}, "
                 f"strength={args.strength}\n")
-        f.write(f"- 载密图基线: PSNR(vs cover) **{psnr(sg, covers):.2f} dB**\n")
+        f.write(f"- 载密图基线: PSNR(vs cover) **{psnr(io.to_pixels(sg), covers):.2f} dB**\n")
         f.write(f"- LPIPS backend: {lpips_backend() or 'unavailable'}\n\n")
         f.write("| t_reg | regen steps | 攻击代价 PSNR vs cover | PSNR vs stego | "
                 "LPIPS vs cover | BER |\n|---|---|---|---|---|---|\n")

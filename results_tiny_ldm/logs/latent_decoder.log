@@ -1,0 +1,7 @@
+  [capacity] res=8 可用 14 对 -> 自适应为 n_bits=4 ecc=3 check=0 bpb=1 (slots=12, pairs=12)
+  [vae] VAE[native] ch=4 down=4x (2^2) scale=1.00000 src=D:\homework\face recognition\deeplearning\diffusion\checkpoints_tiny_ldm\vae32.pt
+[latent] 隐空间解码器训练: latent_shape=[4, 8, 8] 容量=4bit ecc=3 bpb=1 slots=12 n_pairs=12（失真在像素空间施加，再编码回隐空间）
+Files already downloaded and verified
+Files already downloaded and verified
+[eval] step 30 clean=0.688 jpeg50=0.406 noise05=0.406
+saved -> D:\homework\face recognition\deeplearning\diffusion\checkpoints_tiny_ldm\decoder_latent32.pt (best jpeg50 acc 0.406)

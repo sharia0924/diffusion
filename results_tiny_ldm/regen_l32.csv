@@ -1,0 +1,2 @@
+t_reg,regen_steps,cost_psnr_vs_cover,cost_psnr_vs_stego,lpips_vs_cover,ber
+400,25,10.304,26.231,,0.3750

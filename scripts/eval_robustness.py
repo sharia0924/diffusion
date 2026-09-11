@@ -39,6 +39,8 @@ def main():
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--hide-steps", type=int, default=50)
     ap.add_argument("--rec-steps", type=int, default=50)
+    ap.add_argument("--pixel-res", type=int, default=None,
+                    help="cover 像素尺寸；隐空间模型由 eval_setup 自动匹配")
     ap.add_argument("--strength", type=float, default=1.0)
     ap.add_argument("--regen-t", type=int, default=400)
     ap.add_argument("--nonce-start", type=int, default=0)
@@ -48,19 +50,18 @@ def main():
     seed_everything(args.seed)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    from scripts.eval_setup import eval_setup
     dec_ckpt = torch.load(args.decoder_ckpt, map_location=device, weights_only=True)
     cfg = dec_ckpt["config"]
-    stego = load_stego(args.ddpm_ckpt, device, n_bits=cfg["n_bits"], ecc_reps=cfg["ecc"],
-                       bins_per_bit=cfg["bpb"], n_check_bits=cfg["n_check_bits"],
-                       with_vae=True)
+    stego, io, loader, cfg, pixel_res = eval_setup(
+        args.ddpm_ckpt, args.data_root, args.batch, device, args.decoder_ckpt)
+    print(f"[space] {io.describe()}  pixel_res={pixel_res}")
     dec = RingDecoder(2 * cfg["n_pairs"],
                       cfg["n_bits"] * cfg["ecc"] + cfg["n_check_bits"]).to(device)
     dec.load_state_dict(dec_ckpt["decoder"])
     dec.eval()
-    io = build_stego_io(stego)
     print(f"[space] {io.describe()}")
 
-    loader = cifar_loader(args.data_root, train=False, batch_size=args.batch)
     covers, bits_all, keys_all, nonces_all = make_eval_inputs(
         loader, args.n, cfg["n_bits"], device, nonce_start=args.nonce_start)
 
@@ -96,7 +97,7 @@ def main():
     for name, atk, param in STANDARD_ATTACKS:
         # 攻击定义在像素空间：先解码 -> 加失真 -> 回到模型空间
         x_in = stegos if atk == "clean" else io.attack(
-            stegos, lambda t, a=atk: apply_attack(t, a[0], a[1]))
+            stegos, lambda t: apply_attack(t, atk, param))
         rows.append((name, decode_acc(x_in, keys_all)))
         print(f"{name:>14s}: bit-acc {rows[-1][1]:.3f}", flush=True)
 
