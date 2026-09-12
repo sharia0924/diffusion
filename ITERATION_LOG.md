@@ -246,3 +246,76 @@ strength 差 5 倍结果**完全相同** → 扰动在采样中被完全投影�
 | **`LDM_WORKPOINT_DIAGNOSIS.md`** | **尺寸类 bug 清单 + 采样抹除机制 + t\* 解法** |
 | `TRAINING_TUNING.md` | 训练/显存/速度配置 |
 | 本文档 | 方案概述、技术路线、迭代记录、结论、选刊与创新点自评 |
+
+---
+
+## 8. P0 执行结果（2026-09-12 续）
+
+### 8.1 已完成：`inject_at` 落地并全链路贯通
+
+`TrajStego.hide(..., inject_at=frac)`：把注入时刻从轨迹末端提前到 `frac` 位置
+（`k = round(frac × S_hide)` 步反演 → 注入 → k 步采样回 x_0）。
+已贯通：`train_decoder --inject-at` → decoder config → `eval_setup` → `StegoIO.inject_at`
+→ 全部评测脚本自动继承。回归测试：`tests/inject_at_test.py` 通过。
+
+### 8.2 P0 扫描结果（latent 4×32×32, S=150, n=4, matched-filter 接收）
+
+| inject_at | strength | PSNR | mf 准确率 |
+|---|---|---|---|
+| 1.00（原做法） | 0.1 | 36.91 dB | 0.766 |
+| 1.00 | 0.3 | 26.54 dB | 0.938 |
+| 0.50 | 0.3 | 27.33 dB | 0.938 |
+| **0.35** | **0.3** | **27.70 dB** | **0.938** |
+| 0.25 | 0.3 | 27.51 dB | 0.922 |
+
+**结论（与 PoC 的差异需要说明）**：
+- PoC 报的 "inject_at=0.5 → 32.4 dB" 是在 **strength=0.1、S=150、且采样步数也用 150**
+  的条件下测的；本轮正式扫描显示：**inject_at 对 PSNR 的收益在强注入区并不显著**
+  （0.3 强度下 1.0/0.5/0.35 分别是 26.54/27.33/27.70 dB，仅 +1.2 dB）。
+- **更重要**：mf 准确率在 strength≥0.3 处**饱和于 0.938**，把 inject_at 从 1.0 调到 0.25
+  也无法突破 —— 说明**瓶颈不是"扰动被抹除"，而是"每比特观测数不足"**。
+
+### 8.3 找到真正的杠杆：增加每比特观测数
+
+容量报告显示当前只用掉 **160/1368** 对频点（8.6 倍余量未用）。提高 `bins_per_bit`：
+
+| bpb | 实际对数 | strength | PSNR | mf 准确率 |
+|---|---|---|---|---|
+| 2 | 160 | 0.1 | 30.10 dB | 0.625 |
+| 2 | 160 | 0.2 | 30.63 dB | 0.766 |
+| **4** | **320** | **0.1** | **29.35 dB** | **0.781** |
+| **4** | **0.2** | **28.85 dB** | **0.922** |
+| 4 | 320 | 0.2 | 28.85 dB | 0.922 |
+
+**在几乎相同的 PSNR（30.6 → 28.9 dB，仅 -1.7 dB）下，准确率从 0.766 提升到 0.922**
+（+0.156）。这是目前找到的**性价比最高的杠杆**。
+
+### 8.4 当前最优工作点与差距
+
+| 指标 | 当前最优 | 论文可用线 | 差距 |
+|---|---|---|---|
+| PSNR | 28.9 dB | ≥ 35 dB | -6.1 dB |
+| jpeg50 准确率（训练解码器） | 0.734 @28 dB | ≥ 0.95 | -0.22 |
+
+### 8.5 剩余可选杠杆（按预期收益）
+
+1. **降低载荷**：16 bit → 4–8 bit。每比特观测数翻 2–4 倍，是隐写领域的标准折中，
+   预期能把准确率推到 0.95+ 而不牺牲 PSNR。
+2. **软判决 + 真 ECC**：当前是"重复码 + 实部均值"，换成 BCH/LDPC 软译码可再省 3–6 dB。
+3. **重训解码器用新工作点**：现有解码器是在 `inject_at=1.0, bpb=2, S=150` 下训练的；
+   改用 `inject_at=0.35, bpb=4` 重训（约 1 h）应能显著超过当前 0.734。
+
+### 8.6 下一步（P1 修订版）
+
+```powershell
+# 用新工作点重训解码器（inject_at=0.35, bpb=4）
+python scripts/run_pipeline.py --ldm --stages latent_decoder --force `
+    --hide-steps 150 --rec-steps 150
+# 注：bpb 由 fit_capacity 自动上调到 4（res=32 预算 342 对）
+python scripts/train_decoder.py --ddpm-ckpt checkpoints/ddpm_latent32.pt `
+    --out checkpoints/decoder_latent32.pt --steps 300 --batch-size 16 `
+    --inject-mode add --inject-at 0.35 --strength-min 0.1 --strength-max 0.3 `
+    --hide-steps 150 --rec-steps 150 --eval-every 100
+```
+然后跑 `eval_ldm_pipeline.py` + `eval_strength_sweep.py` 确认能否达到
+PSNR≥35 dB 且 jpeg50≥0.95；若仍不达标，则执行 8.5 第 1 项（降载荷到 8 bit）。

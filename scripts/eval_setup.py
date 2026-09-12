@@ -67,7 +67,9 @@ def eval_setup(ddpm_ckpt: str, data_root: str, batch_size: int, device: str,
                        bins_per_bit=c.get("bpb", 2),
                        n_check_bits=c.get("n_check_bits", 32),
                        inject_mode=c.get("inject_mode", "replace"))
-    io = StegoIO(stego, pixel_res=pixel_res)
+    io = StegoIO(stego, pixel_res=pixel_res, inject_at=c.get("inject_at", 1.0))
+    if c.get("inject_at") is not None:
+        print(f"[inject] 从解码器回填 inject_at={io.inject_at}（训练/评测一致）", flush=True)
     loader = cifar_loader(data_root, train=False, batch_size=batch_size,
                           resize=None if pixel_res == 32 else pixel_res)
     return stego, io, loader, cfg, pixel_res

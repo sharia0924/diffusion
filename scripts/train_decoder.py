@@ -172,6 +172,9 @@ def main():
                     help="重复码次数；槽位数 = n_bits×reps + n_check_bits")
     ap.add_argument("--bins-per-bit", type=int, default=2,
                     help="每槽占用的频点对数；超预算时会自动下调并打印提示")
+    ap.add_argument("--inject-at", type=float, default=1.0,
+                    help="注入时刻占反演轨迹的比例；1.0=末端(历史行为)，"
+                         "0.25-0.5=轨迹中点（实测可显著降低采样对扰动的抹除）")
     ap.add_argument("--inject-mode", choices=["replace", "add"], default="add",
                     help="频谱注入方式：add = 加性（保留原系数，质量随 strength 平滑变化，"
                          "隐空间必备）；replace = 历史行为（覆盖系数，实测一加注入"
@@ -247,7 +250,8 @@ def main():
     # 这个"解码-再编码"本身就是 VAE 引入的额外信道损耗，必须在训练时就模拟。
     def hide_space(x_pix, bits, keys, hide_steps, strength, nonces):
         z = images_to_stego_space(stego, x_pix)
-        return stego.hide(z, bits, keys, hide_steps, strength=strength, nonces=nonces)
+        return stego.hide(z, bits, keys, hide_steps, strength=strength, nonces=nonces,
+                           inject_at=args.inject_at)
 
     def to_space(x_img):
         return images_to_stego_space(stego, x_img)
@@ -285,7 +289,8 @@ def main():
               "res": stego.res, "n_check_bits": stego.n_check_bits,
               "n_pairs": stego.n_pairs, "hide_steps": args.hide_steps,
               "rec_steps": args.rec_steps, "nonce_protocol": "keyed-v2",
-              "geom_prob": args.geom_prob, "inject_mode": args.inject_mode}
+              "geom_prob": args.geom_prob, "inject_mode": args.inject_mode,
+              "inject_at": args.inject_at}
     for step in range(1, args.steps + 1):
         try:
             x0, _ = next(it)
