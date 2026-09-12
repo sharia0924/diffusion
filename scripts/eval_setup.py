@@ -41,9 +41,15 @@ def pixel_res_of(ddpm_ckpt: str) -> int:
 
 
 def load_decoder_cfg(decoder_ckpt: str | None):
-    if decoder_ckpt and os.path.exists(decoder_ckpt):
+    """读取解码器配置；不存在/损坏时返回 None（调用方负责提示或退化）。"""
+    if not decoder_ckpt or not os.path.exists(decoder_ckpt):
+        return None
+    try:
         return torch.load(decoder_ckpt, map_location="cpu", weights_only=True)["config"]
-    return None
+    except Exception as e:
+        print(f"[decoder] 读取 {decoder_ckpt} 失败（{type(e).__name__}），"
+              f"按无解码器处理", flush=True)
+        return None
 
 
 def eval_setup(ddpm_ckpt: str, data_root: str, batch_size: int, device: str,

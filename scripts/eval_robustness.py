@@ -47,15 +47,34 @@ def main():
     ap.add_argument("--out", default="results/robustness.md")
     ap.add_argument("--seed", type=int, default=123)
     args = ap.parse_args()
+
+    # 步数默认值从解码器 config 回填（训练/评测工作点必须一致）
+    _explicit = {"--hide-steps", "--rec-steps"} & set(sys.argv)
+    try:
+        import torch as _t
+        if os.path.exists(args.decoder_ckpt):
+            _dcfg = _t.load(args.decoder_ckpt, map_location="cpu",
+                            weights_only=True)["config"]
+            if "--hide-steps" not in _explicit and _dcfg.get("hide_steps"):
+                args.hide_steps = int(_dcfg["hide_steps"])
+            if "--rec-steps" not in _explicit and _dcfg.get("rec_steps") \
+                    and hasattr(args, "rec_steps"):
+                args.rec_steps = int(_dcfg["rec_steps"])
+            print(f"[steps] 从解码器回填: hide={getattr(args, 'hide_steps', None)} "
+                  f"rec={getattr(args, 'rec_steps', None)}", flush=True)
+    except Exception:
+        pass
     seed_everything(args.seed)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     from scripts.eval_setup import eval_setup
-    dec_ckpt = torch.load(args.decoder_ckpt, map_location=device, weights_only=True)
-    cfg = dec_ckpt["config"]
     stego, io, loader, cfg, pixel_res = eval_setup(
         args.ddpm_ckpt, args.data_root, args.batch, device, args.decoder_ckpt)
     print(f"[space] {io.describe()}  pixel_res={pixel_res}")
+    if cfg is None:
+        raise SystemExit(f"[decoder] 需要解码器 checkpoint：{args.decoder_ckpt} 不存在"
+                         f"（先用 train_decoder.py 训练）")
+    dec_ckpt = torch.load(args.decoder_ckpt, map_location=device, weights_only=True)
     dec = RingDecoder(2 * cfg["n_pairs"],
                       cfg["n_bits"] * cfg["ecc"] + cfg["n_check_bits"]).to(device)
     dec.load_state_dict(dec_ckpt["decoder"])

@@ -53,6 +53,23 @@ def main():
     ap.add_argument("--out", default="results/ldm_pipeline.md")
     ap.add_argument("--seed", type=int, default=5)
     args = ap.parse_args()
+
+    # 步数默认值从解码器 config 回填（训练/评测工作点必须一致）
+    _explicit = {"--hide-steps", "--rec-steps"} & set(sys.argv)
+    try:
+        import torch as _t
+        if os.path.exists(args.decoder_ckpt):
+            _dcfg = _t.load(args.decoder_ckpt, map_location="cpu",
+                            weights_only=True)["config"]
+            if "--hide-steps" not in _explicit and _dcfg.get("hide_steps"):
+                args.hide_steps = int(_dcfg["hide_steps"])
+            if "--rec-steps" not in _explicit and _dcfg.get("rec_steps") \
+                    and hasattr(args, "rec_steps"):
+                args.rec_steps = int(_dcfg["rec_steps"])
+            print(f"[steps] 从解码器回填: hide={getattr(args, 'hide_steps', None)} "
+                  f"rec={getattr(args, 'rec_steps', None)}", flush=True)
+    except Exception:
+        pass
     seed_everything(args.seed)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"

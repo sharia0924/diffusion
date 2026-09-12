@@ -277,8 +277,10 @@ def main():
                     help="额外训练 --sched-noise-prob 0 的对照组, 并对 robust/p3 各评一次")
 
     # 共同评测参数
-    ap.add_argument("--hide-steps", type=int, default=50)
-    ap.add_argument("--rec-steps", type=int, default=50)
+    ap.add_argument("--hide-steps", type=int, default=150,
+                    help="隐藏端 DDIM 反演步数；隐空间实测 50->150 步可把往返天花板从 29.4 提到 38 dB")
+    ap.add_argument("--rec-steps", type=int, default=150,
+                    help="复原端 DDIM 反演步数；必须与隐藏端一致，且与解码器训练步数一致")
     ap.add_argument("--strength", type=float, default=1.0)
     ap.add_argument("--batch-eval", type=int, default=16)
     ap.add_argument("--n-robust", type=int, default=64)
