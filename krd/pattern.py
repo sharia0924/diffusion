@@ -136,6 +136,29 @@ def _spec_put(F_: torch.Tensor, bins: torch.Tensor, W: int, values: torch.Tensor
     return F_.view(C, F_.shape[1], F_.shape[2])
 
 
+def _check_grid(params: dict, x_T: torch.Tensor, who: str) -> None:
+    """运行时护栏：图案的 res 必须与被写入张量的空间尺寸一致。
+
+    历史上出过两次同类事故：
+      1) res 从 latent_res 回退成 32，而 latent 只有 16×16 -> gather 越界；
+      2) 解码器训练误用 32×32 像素图（VAE 按 64² 训练）-> latent 16×16，
+         而 res 仍是 32 -> CUDA device-side assert（报错信息完全看不出根因）。
+    这里提前抛出可读错误，替掉难懂的 CUDA 断言。
+    """
+    res = int(params.get("res", 0) or 0)
+    if res and (x_T.shape[-2] != res or x_T.shape[-1] != res):
+        raise ValueError(
+            f"[{who}] 空间尺寸与图案 res 不一致：张量 {tuple(x_T.shape)} "
+            f"(H={x_T.shape[-2]}, W={x_T.shape[-1]})，但图案按 res={res} 生成。\n"
+            f"        常见原因：像素输入尺寸与 VAE 训练时的 --resize 不一致"
+            f"（隐空间模型必须用同一尺寸），或 latent_res 推断错误。")
+    if res:
+        bins = params["bins"]
+        if int(bins.max()) >= res:
+            raise ValueError(
+                f"[{who}] 频点下标越界：bins.max={int(bins.max())} >= res={res}")
+
+
 def inject_pattern(x_T: torch.Tensor, bits: torch.Tensor, params: dict,
                    strength: float = 1.0, mode: str = "replace") -> torch.Tensor:
     """把 bits（长度 L_e, 取值 {0,1}）写入单张 x_T (C,H,W) 的频谱。
@@ -156,6 +179,7 @@ def inject_pattern(x_T: torch.Tensor, bits: torch.Tensor, params: dict,
     n_pairs = bins.shape[0]
     assert n_pairs % L_e == 0, f"n_pairs({n_pairs}) 必须能被 L_e({L_e}) 整除"
     g = n_pairs // L_e
+    _check_grid(params, x_T, "inject_pattern")
 
     sign = torch.where(bits.to(x_T.device) > 0.5,
                        torch.tensor(1.0, device=x_T.device),
@@ -202,6 +226,7 @@ def ring_features(x_T: torch.Tensor, params: dict) -> torch.Tensor:
     """
     bins = params["bins"].to(x_T.device)
     phases = params["phases"].to(x_T.device)
+    _check_grid(params, x_T, "ring_features")
     F_ = torch.fft.fftshift(torch.fft.fft2(x_T, norm="ortho"), dim=(-2, -1))
     vals = _spec_take(F_, bins, x_T.shape[-1])                         # (C, n_pairs) complex
     vals = vals * torch.exp(-1j * phases)[None, :]
