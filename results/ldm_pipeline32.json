@@ -1,58 +1,58 @@
 {
-  "space": "空间=隐空间 (4, 8, 8)，VAE=VAE[native] ch=4 down=4x (2^2) scale=1.00000 src=D:\\homework\\face recognition\\deeplearning\\diffusion\\checkpoints\\vae32.pt",
-  "n": 4,
-  "n_bits": 4,
+  "space": "空间=隐空间 (4, 32, 32)，VAE=VAE[native] ch=4 down=2x (2^1) scale=1.00000 src=D:\\homework\\face recognition\\deeplearning\\diffusion\\checkpoints\\vae32.pt",
+  "n": 8,
+  "n_bits": 16,
   "pixel_baseline": false,
   "rows": [
     {
       "strength": 0.02,
-      "psnr": 14.266357043050494,
-      "ssim": 0.24011194705963135,
+      "psnr": 38.80575925646695,
+      "ssim": 0.9798325300216675,
       "lpips": null,
-      "dec_clean": 0.4375,
-      "dec_jpeg50": 0.4375,
-      "mf_clean": 0.375
+      "dec_clean": 0.5078125,
+      "dec_jpeg50": 0.5234375,
+      "mf_clean": 0.5234375
     },
     {
       "strength": 0.05,
-      "psnr": 13.624247922193247,
-      "ssim": 0.20891425013542175,
+      "psnr": 38.262979352255556,
+      "ssim": 0.9764002561569214,
       "lpips": null,
-      "dec_clean": 0.4375,
-      "dec_jpeg50": 0.4375,
-      "mf_clean": 0.5
+      "dec_clean": 0.5625,
+      "dec_jpeg50": 0.53125,
+      "mf_clean": 0.5625
     },
     {
       "strength": 0.1,
-      "psnr": 12.299032289740007,
-      "ssim": 0.15091940760612488,
+      "psnr": 36.810388780965184,
+      "ssim": 0.9674350619316101,
       "lpips": null,
-      "dec_clean": 0.4375,
-      "dec_jpeg50": 0.4375,
-      "mf_clean": 0.625
+      "dec_clean": 0.640625,
+      "dec_jpeg50": 0.640625,
+      "mf_clean": 0.6640625
     },
     {
       "strength": 0.3,
-      "psnr": 9.517634743311275,
-      "ssim": 0.08259540796279907,
+      "psnr": 28.097264518701316,
+      "ssim": 0.8653920888900757,
       "lpips": null,
-      "dec_clean": 0.4375,
-      "dec_jpeg50": 0.4375,
-      "mf_clean": 0.75
+      "dec_clean": 0.8828125,
+      "dec_jpeg50": 0.734375,
+      "mf_clean": 0.9296875
     }
   ],
-  "vae_roundtrip_psnr": 16.96054867050852,
+  "vae_roundtrip_psnr": 51.52840500048859,
   "capacity": {
     "z_shape": [
       4,
-      8,
-      8
+      32,
+      32
     ],
-    "avail_bins_single_channel": 14,
-    "avail_pairs_all_channels": 56,
-    "r_min": 1,
-    "r_max": 3,
-    "slots": 4,
-    "obs_per_bit_ceiling": 14.0
+    "avail_bins_single_channel": 342,
+    "avail_pairs_all_channels": 1368,
+    "r_min": 3,
+    "r_max": 15,
+    "slots": 16,
+    "obs_per_bit_ceiling": 85.5
   }
 }

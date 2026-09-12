@@ -1,29 +1,29 @@
 # 密钥安全性评测（P1）
 
-- 样本数 n=4, S_hide=25, S_rec=25, strength=0.4
-- 空间=隐空间 (4, 8, 8)，VAE=VAE[native] ch=4 down=4x (2^2) scale=1.00000 src=D:\homework\face recognition\deeplearning\diffusion\checkpoints\vae32.pt
-- 载密图基线: PSNR 9.74 dB / SSIM 0.0976 / LPIPS n/a
+- 样本数 n=8, S_hide=150, S_rec=150, strength=0.3
+- 空间=隐空间 (4, 32, 32)，VAE=VAE[native] ch=4 down=2x (2^1) scale=1.00000 src=D:\homework\face recognition\deeplearning\diffusion\checkpoints\vae32.pt
+- 载密图基线: PSNR 28.17 dB / SSIM 0.8612 / LPIPS n/a
 - nonce 协议: `nonce_i = H(key || nonce_start+i)`（自包含, 不依赖 cover）
 
 ## A. 错密钥/近密钥 BER 分布
 
-- 错密钥数 48（随机 20 + 近密钥变体）
-- BER: mean **0.4544** / std 0.1486 / min 0.1875 / max 0.8125（期望 0.5，越集中越安全）
+- 错密钥数 76（随机 20 + 近密钥变体）
+- BER: mean **0.4977** / std 0.0403 / min 0.3750 / max 0.5703（期望 0.5，越集中越安全）
 
-- 真密钥比特准确率: **0.6875**
+- 真密钥比特准确率: **0.8984**
 
 ## B. matched-filter 密钥校验（无需解码器）
 
-- 真密钥校验距离: mean 0.00 / max 0 / 0
-- 错密钥距离: mean 0.00 / std 0.00（期望 ≈ 0.0）
-- FAR@tau=4: **1.00000**
-- FAR@tau=8: **1.00000**
-- FAR@tau=12: **1.00000**
+- 真密钥校验距离: mean 6.88 / max 11 / 32
+- 错密钥距离: mean 15.98 / std 1.18（期望 ≈ 16.0）
+- FAR@tau=4: **0.00000**
+- FAR@tau=8: **0.00000**
+- FAR@tau=12: **0.03704**
 
 ## D. 跨图残差方向一致性（|corr|, 0=完全正交, 1=图案固定可累积）
 
-- 无 nonce 协议: mean **0.246** / max 0.425
-- 逐图 nonce（ours）: mean **0.121** / max 0.297
+- 无 nonce 协议: mean **0.165** / max 0.249
+- 逐图 nonce（ours）: mean **0.035** / max 0.113
 
 ## C. 多图差分攻击：槽位定位 AUC（0.5=失效；>0.5 即攻击有效）
 
@@ -32,23 +32,23 @@
 
 | N | 无 nonce 协议 | 逐图 nonce（ours） |
 |---|---|---|
-| 1 | 0.795 | 0.807 |
-| 2 | 0.888 | 0.793 |
-| 4 | 0.963 | 0.726 |
+| 2 | 0.824 | 0.639 |
+| 4 | 0.932 | 0.662 |
+| 8 | 0.964 | 0.662 |
 
 ## E. 盲水印检测 AUC（隐写分析视角：只给图，能否区分载密图 vs 原图）
 
-- 无 nonce 协议: **1.000**（direction +1, train 2 / test 2）
-- 逐图 nonce（ours）: **1.000**（direction +1, train 2 / test 2）
+- 无 nonce 协议: **1.000**（direction +1, train 4 / test 4）
+- 逐图 nonce（ours）: **0.750**（direction +1, train 4 / test 4）
 
 > 0.5 = 完全无法区分（安全）；越接近 1 说明载密图越容易被测出。
 > 该指标与载密图 PSNR 强相关：只要嵌入能量可观，它就接近 1。
 
 ## F. 密钥空间（必须区分两个量）
 
-- **派生参数空间下界**（频点选择 × 8bit 相位量化）: log2 ≈ **102.5 bit**
-  - 环带 (1, 3), 可用频点 14, 每图使用 12 对
-  - log2(频点选择) = 6.5, log2(相位量化) = 96.0
+- **派生参数空间下界**（频点选择 × 8bit 相位量化）: log2 ≈ **1354.1 bit**
+  - 环带 (3, 11), 可用频点 176, 每图使用 160 对
+  - log2(频点选择) = 74.1, log2(相位量化) = 1280.0
 - **密钥本身熵**: 16 hex chars = **64 bit**（`token_key()` 默认 16）
 
 > 攻击者枚举的是**密钥**而不是派生参数，因此真实安全强度由密钥熵封顶；参数空间下界只说明“图案有多少种可能”，不能直接当作抗暴力破解强度。
