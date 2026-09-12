@@ -566,6 +566,10 @@ def main():
                        "--batch-size", str(args.latent_ddpm_batch),
                        "--save-every", "10", "--log-every", "200",
                        "--vae-backend", "native", "--vae-ckpt", vck,
+                       # **必须与 VAE 训练时的 --resize 一致**：否则 latent 尺寸对不上
+                       # （VAE 按 64² 训练 -> latent 32²；若这里漏传，DDPM 会在 16² 上训练，
+                       #  评测按 DDPM 的 resize 推断像素尺寸也会错，得到无意义的 PSNR）。
+                       "--resize", str(args.vae_resize),
                        "--rebuild-latent-cache"]
                       + (["--tiny"] if args.tiny else []),
                       done_marker=None if _need_more(lat_ddpm, args.latent_ddpm_epochs,

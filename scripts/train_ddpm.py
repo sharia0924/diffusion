@@ -139,6 +139,22 @@ def main():
         vae = build_vae(args.vae_backend, ckpt=args.vae_ckpt, device=device,
                         model_id=args.vae_model_id)
         args.in_ch = args.in_ch or vae.latent_channels
+        # **尺寸一致性校验**：VAE 训练时的像素尺寸（存于其 ckpt 的 args.resize）必须与
+        # 这里的 --resize 一致，否则 latent 分辨率会不同（曾出过：VAE 按 64² 训练得到
+        # 32×32 latent，而 DDPM 漏传 --resize 在 32² 上编码得到 16×16，导致后续评测
+        # 按错误像素尺寸算 PSNR，指标全部无意义）。
+        try:
+            vae_args = torch.load(args.vae_ckpt, map_location="cpu",
+                                  weights_only=False).get("args", {})
+            vae_resize = vae_args.get("resize")
+        except Exception:
+            vae_resize = None
+        if vae_resize and int(vae_resize) != int(args.resize or 0):
+            raise SystemExit(
+                f"[latent] --resize 与 VAE 训练时不一致：\n"
+                f"          VAE checkpoint 用 resize={vae_resize} 训练，"
+                f"当前 --resize={args.resize}\n"
+                f"          请加 --resize {vae_resize}（否则 latent 尺寸不符，评测指标无效）")
         n = len(ds)
         key = cache_key(vae.describe(), f"cifar-train-{n}", args.resize, n)
         path = cache_path(args.latent_cache_dir, key)
