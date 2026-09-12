@@ -13,6 +13,3 @@
 
 | 阶段 | 状态 | 用时(min) | 命令 |
 |---|---|---|---|
-| vae | done | 87.5 | `--data-root ./data --out D:\homework\face recognition\deeplearning\diffusion\checkpoints\vae32.pt --epochs 25 --batch-size 64 --base 64 --z-ch 4 --downsample 1 --ch-mults 1,2 --kl-weight 0.0001 --resize 64 --save-every 2 --log-every 200` |
-| latent_ddpm | done | 89.0 | `--data-root ./data --out D:\homework\face recognition\deeplearning\diffusion\checkpoints\ddpm_latent32.pt --epochs 100 --batch-size 64 --save-every 10 --log-every 200 --vae-backend native --vae-ckpt D:\homework\face recognition\deeplearning\diffusion\checkpoints\vae32.pt --rebuild-latent-cache` |
-| latent_decoder | done | 35.8 | `--ddpm-ckpt D:\homework\face recognition\deeplearning\diffusion\checkpoints\ddpm_latent32.pt --out D:\homework\face recognition\deeplearning\diffusion\checkpoints\decoder_latent32.pt --data-root ./data --steps 1000 --batch-size 16 --inject-mode add --strength-min 0.05 --strength-max 0.4 --sched-noise-prob 0.3 --geom-prob 0.25 --hide-steps 50 --rec-steps 50 --eval-every 250` |

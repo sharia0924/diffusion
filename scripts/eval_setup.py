@@ -18,9 +18,26 @@ from scripts.train_decoder import load_stego
 
 
 def pixel_res_of(ddpm_ckpt: str) -> int:
-    """从 DDPM checkpoint 推断 cover 的像素尺寸（VAE 训练时的 --resize）。"""
+    """推断 cover 的像素尺寸（= VAE 训练时的 --resize）。
+
+    取值链：DDPM 的 args.resize -> 其 vae_ckpt 的 args.resize -> 由 latent_shape
+    与 VAE 下采样倍数反推 -> 32。只看 DDPM 的 resize 不够稳：早期 checkpoint
+    可能没写该字段，而 VAE checkpoint 里一定有（train_vae.py 的 --resize）。
+    """
     margs = torch.load(ddpm_ckpt, map_location="cpu", weights_only=False).get("args", {})
-    return int(margs.get("resize") or 32)
+    res = margs.get("resize")
+    vck = margs.get("vae_ckpt")
+    vargs = {}
+    if vck and os.path.exists(vck):
+        try:
+            vargs = torch.load(vck, map_location="cpu", weights_only=False).get("args", {})
+        except Exception:
+            vargs = {}
+    if not res:
+        res = vargs.get("resize")
+    if not res and margs.get("latent_shape") and vargs.get("downsample") is not None:
+        res = int(margs["latent_shape"][1]) * (2 ** int(vargs["downsample"]))
+    return int(res or 32)
 
 
 def load_decoder_cfg(decoder_ckpt: str | None):

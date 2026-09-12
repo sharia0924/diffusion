@@ -203,11 +203,30 @@ def main():
     decoder = RingDecoder(2 * stego.n_pairs, stego.total_embed_bits).to(device)
     opt = torch.optim.AdamW(decoder.parameters(), lr=args.lr, weight_decay=1e-4)
 
-    tf = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-    ])
+    # **像素尺寸必须与 VAE 训练时一致**：否则 VAE 编码出的 latent 分辨率会偏小
+    # （例：VAE 按 64² 训练 -> 32×32 latent；若这里仍用 32² CIFAR，会得到 16×16 latent，
+    #  而图案频率网格按 res=32 生成 -> gather 越界 / 指标无效）。
+    _vae_resize = None
+    if getattr(stego, "vae", None) is not None:
+        try:
+            _vck = torch.load(args.ddpm_ckpt, map_location="cpu",
+                              weights_only=False).get("args", {}).get("vae_ckpt")
+            _vae_resize = torch.load(_vck, map_location="cpu",
+                                     weights_only=False).get("args", {}).get("resize")
+        except Exception:
+            _vae_resize = None
+        if _vae_resize:
+            print(f"[latent] 像素输入将缩放到 {_vae_resize}×{_vae_resize}"
+                  f"（与 VAE 训练一致）", flush=True)
+
+    tf_list = []
+    if _vae_resize:
+        tf_list.append(transforms.Resize(int(_vae_resize), antialias=True))
+    tf_list += [transforms.ToTensor(),
+                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
+    tf = transforms.Compose(tf_list)
     ds = datasets.CIFAR10(args.data_root, train=True, download=True, transform=tf)
+    eval_ds = datasets.CIFAR10(args.data_root, train=False, download=True, transform=tf)
     if args.tiny:
         ds = Subset(ds, range(64))
     num_workers = resolve_num_workers(args.num_workers)
@@ -217,7 +236,6 @@ def main():
     it = iter(loader)
 
     # 固定评测批（nonce 协议与部署一致：nonce = H(key || counter)，不依赖 cover）
-    eval_ds = datasets.CIFAR10(args.data_root, train=False, download=True, transform=tf)
     eval_x = torch.stack([eval_ds[i][0] for i in range(args.eval_size)]).to(device)
     eval_keys = [token_key(rng) for _ in range(args.eval_size)]
     eval_nonces = derive_nonces_from_keys(eval_keys, start=0)
@@ -280,6 +298,25 @@ def main():
         keys = [token_key(rng) for _ in range(B)]
         nonces = derive_nonces_from_keys(keys, start=step * 1000)
         strength = torch.empty(B, device=device).uniform_(args.strength_min, args.strength_max)
+
+        if step == 1 and os.environ.get("KRD_DEBUG_STEP"):
+            # 崩溃定位用：打印注入前的真实形状与索引范围
+            from krd.pattern import _lin_index
+            z_dbg = images_to_stego_space(stego, x0)
+            xT_dbg = stego.sched.ddim_invert(stego.model, z_dbg, args.hide_steps)
+            p_dbg = stego.params_for(keys[0], nonces[0])
+            b_dbg = p_dbg["bins"]
+            Cd, Hd, Wd = xT_dbg[0].shape
+            idx_dbg = _lin_index(b_dbg, Wd)
+            mir_dbg = torch.stack([(-b_dbg[:, 0]) % Hd, (-b_dbg[:, 1]) % Wd], dim=1)
+            print(f"[DEBUG] x0={tuple(x0.shape)} z={tuple(z_dbg.shape)} "
+                  f"xT={tuple(xT_dbg.shape)} B={B}", flush=True)
+            print(f"[DEBUG] res={stego.res} bpb={stego.bpb} n_pairs={stego.n_pairs} "
+                  f"mode={stego.inject_mode} strength={strength[:3].tolist()}", flush=True)
+            print(f"[DEBUG] bins row[{int(b_dbg[:,0].min())},{int(b_dbg[:,0].max())}] "
+                  f"col[{int(b_dbg[:,1].min())},{int(b_dbg[:,1].max())}]", flush=True)
+            print(f"[DEBUG] idx.max={int(idx_dbg.max())} mirror.max={int(_lin_index(mir_dbg, Wd).max())} "
+                  f"limit={Cd * Hd * Wd}", flush=True)
 
         sg = hide_space(x0, bits, keys, args.hide_steps, strength, nonces)
         x_in = torch.stack([
