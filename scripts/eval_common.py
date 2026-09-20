@@ -83,7 +83,8 @@ class StegoIO:
     在解码回像素后计算。
     """
 
-    def __init__(self, stego, pixel_res: int | None = None, inject_at: float = 1.0):
+    def __init__(self, stego, pixel_res: int | None = None, inject_at: float = 1.0,
+                 n_inject: int = 1):
         self.stego = stego
         self.vae = getattr(stego, "vae", None)
         self.latent = self.vae is not None
@@ -91,6 +92,8 @@ class StegoIO:
         # 注入时刻：训练/评测必须一致（见 LDM_WORKPOINT_DIAGNOSIS.md §7）。
         # 默认 1.0 = 历史行为（末端注入）。
         self.inject_at = float(inject_at)
+        # 多步注入次数：训练/评测必须一致（见 krd/stego.py 的 n_inject 说明）
+        self.n_inject = int(n_inject)
 
     # ---- 空间转换 ----
     def to_space(self, x_pix: torch.Tensor) -> torch.Tensor:
@@ -103,11 +106,18 @@ class StegoIO:
 
     # ---- 流水线 ----
     def hide(self, covers_pix, bits, keys, hide_steps, strength, nonces=None,
-             inject_at=None):
-        """inject_at=None 时使用 self.inject_at（由解码器 config 决定）。"""
+             inject_at=None, n_inject=None):
+        """inject_at / n_inject 为 None 时使用实例值（由解码器 config 决定）。
+
+        注意 strength 语义：`n_inject>1` 时这里是**每次注入**的强度；
+        若要与 n=1 保持总注入能量一致，调用方需传 strength/n
+        （`train_decoder --n-inject` 已按此处理）。
+        """
         ia = self.inject_at if inject_at is None else inject_at
+        ni = self.n_inject if n_inject is None else n_inject
         return self.stego.hide(self.to_space(covers_pix), bits, keys, hide_steps,
-                               strength=strength, nonces=nonces, inject_at=ia)
+                               strength=strength, nonces=nonces, inject_at=ia,
+                               n_inject=ni)
 
     def recover(self, z_or_pix, keys, rec_steps, decoder, nonces=None):
         return self.stego.recover(z_or_pix, keys, rec_steps, decoder, nonces=nonces)

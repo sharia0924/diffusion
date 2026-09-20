@@ -83,21 +83,25 @@ class TrajStego:
     @torch.no_grad()
     def hide(self, cover: torch.Tensor, bits: torch.Tensor, keys,
              hide_steps: int = 50, strength=1.0, nonces=None,
-             inject_at: float | None = None) -> torch.Tensor:
+             inject_at: float | None = None, n_inject: int = 1) -> torch.Tensor:
         """cover (B,C,H,W), bits (B,n_bits)∈{0,1}, keys: list[str] len B。
 
         nonces: list[str] len B；None 时逐图派生 nonce=H(key||i)（自包含协议）。
         strength: float 或 (B,) tensor，控制图案强度（隐秘性/容量的折中）。
         inject_at: 注入时刻占反演轨迹的比例 ∈ (0,1]。
           - None / 1.0 ：反演到最末端 x_T 再注入（历史行为）
-          - 0.25–0.5  ：**推荐**。只反演 k=round(inject_at×S_hide) 步、在该时刻注入、
-                        再从该时刻采样回 x_0（仍是 k 步采样）。
-            理由（见 LDM_WORKPOINT_DIAGNOSIS.md §6/§7）：扩散采样每步都经学到的
-            ε_θ 投影回数据流形，会把"离流形"的小扰动抹掉。末端注入后要经过全部
-            S_hide 步（被抹 h 次），中点注入只剩一半步数，扰动存活率显著提高。
-            实测（latent 4×32×32, S=150, strength=0.1）：
-              inject_at=1.0 -> PSNR 9.39 dB, mf 0.453
-              inject_at=0.5 -> PSNR 32.40 dB, mf 0.625
+          - 0.25–0.5  ：反演到该时刻注入、再从该时刻采样回 x_0。
+            理由（LDM_WORKPOINT_DIAGNOSIS.md §6/§7）：扩散采样每步都经学到的 ε_θ
+            投影回数据流形，会把"离流形"的小扰动抹掉。
+        n_inject: **多步注入次数**（默认 1 = 历史行为）。
+          在轨迹的**下坡段**选 n 个时刻，每处注入一次相同的图案。
+          语义（重要）：调用方给出的 `strength` 被理解为**每次注入**的强度；
+          若希望"总注入能量固定"，请传 `strength/n`（脚本层 `--n-inject` 即这么处理）。
+          实测（latent 4×32×32, S=150, inject_at=0.35, 总能量守恒）：
+            总能量 0.3：n=1 -> PSNR 29.35 / mf 0.906；n=8 -> PSNR 30.74 / mf 0.922
+          即**准确率由总能量决定，分步只把 PSNR 抬上去**（峰值扰动更小），
+          因此这是"零额外计算换 1–1.4 dB"的净收益，但**不会把前沿整体左移**。
+          实现上不增加反演/采样次数（仍是 k 步采样）。
         """
         B = cover.shape[0]
         if not torch.is_tensor(strength):
@@ -105,20 +109,38 @@ class TrajStego:
         strength = strength.to(self.device).view(B)
         nonces = self.resolve_nonces(nonces, B, keys=keys)
 
-        # 注入时刻：k 步反演 -> 注入 -> k 步采样（k = S_hide 时即历史行为）
+        # 轨迹下坡段起点：k 步反演 -> 注入 -> k 步采样
         frac = 1.0 if inject_at is None else float(inject_at)
         frac = min(max(frac, 1e-3), 1.0)
-        k = max(1, int(round(hide_steps * frac)))
-        k = min(k, hide_steps)
+        k = min(max(1, int(round(hide_steps * frac))), hide_steps)
 
-        x_k = self.sched.ddim_invert(self.model, cover, k)
-        x_k2 = []
-        for i in range(B):
-            b_full = self.full_bits(bits[i], keys[i], nonces[i])
-            x_k2.append(inject_pattern(x_k[i], b_full, self.params_for(keys[i], nonces[i]),
-                                       float(strength[i]), mode=self.inject_mode))
-        x_k2 = torch.stack(x_k2)
-        return self.sched.ddim_sample(self.model, x_k2, k)
+        seq = self.sched.timestep_seq(k)
+        n = max(1, int(n_inject))
+        # 注入时刻（timestep_seq 的下标）：把 [0, len(seq)-2] 等分 n 份，取每份右端
+        if n == 1:
+            idxs = [len(seq) - 2]
+        else:
+            idxs = sorted({int(round((j + 1) * (len(seq) - 2) / n)) for j in range(n)})
+
+        # 预取一次图案参数（避免每个注入点重复查缓存）
+        params = [self.params_for(keys[i], nonces[i]) for i in range(B)]
+        bits_full = [self.full_bits(bits[i], keys[i], nonces[i]) for i in range(B)]
+
+        x = cover
+        inj_set = set(idxs)
+        # 沿升序把 cover 推到轨迹上：每到一个注入时刻就写一次图案
+        for i in range(len(seq) - 1):
+            t_cur = torch.full((B,), int(seq[i]), device=self.device, dtype=torch.long)
+            t_next = torch.full((B,), int(seq[i + 1]), device=self.device, dtype=torch.long)
+            x = self.sched.ddim_update(self.model, x, t_cur, t_next, eta=0.0)
+            if i in inj_set:
+                x = torch.stack([
+                    inject_pattern(x[j], bits_full[j], params[j],
+                                   float(strength[j]), mode=self.inject_mode)
+                    for j in range(B)
+                ])
+        # 从最深的注入时刻采样回 x_0（同一段轨迹，步数不变）
+        return self.sched.ddim_sample(self.model, x, k)
 
     # ---------- 复原端：步数固定，公式驱动 ----------
 
