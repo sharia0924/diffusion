@@ -91,7 +91,13 @@ def key_params(key: str, n_pairs: int, res: int = 32, r_min: int | None = None,
     perm = rng.permutation(len(bins))[:n_pairs]
     bins = bins[perm].astype(np.int64)
     phases = rng.uniform(0.0, 2.0 * np.pi, size=n_pairs).astype(np.float32)
+    # base_mag：密钥决定的**幅度轮廓**。归一化到均值 1，因此不改变总能量语义
+    # （strength 仍是"平均逐系数幅度"）。add 模式下它作为**同步模板**使用：
+    # 接收端知道这个轮廓，就能在旋转/平移/缩放后靠 320 个频点的幅度相关把位置找回来
+    # （见 krd/sync.py 与 ITERATION_LOG §21：没有它，16 位校验位做盲搜索会被
+    #  3087 个假设的噪声底盖过）。
     base_mag = rng.uniform(0.5, 1.5, size=n_pairs).astype(np.float32)
+    base_mag /= max(float(base_mag.mean()), 1e-8)
     return {
         "key": key,
         "nonce": nonce,
@@ -167,7 +173,8 @@ def _check_grid(params: dict, x_T: torch.Tensor, who: str) -> None:
 
 
 def inject_pattern(x_T: torch.Tensor, bits: torch.Tensor, params: dict,
-                   strength: float = 1.0, mode: str = "replace") -> torch.Tensor:
+                   strength: float = 1.0, mode: str = "replace",
+                   use_mag_profile: bool = False) -> torch.Tensor:
     """把 bits（长度 L_e, 取值 {0,1}）写入单张 x_T (C,H,W) 的频谱。
 
     L_e 组比特，每组占 g = n_pairs // L_e 个频点对；组内符号 = 2b-1。
@@ -177,9 +184,18 @@ def inject_pattern(x_T: torch.Tensor, bits: torch.Tensor, params: dict,
         这是**破坏性**写法：它把选中频点的原始系数（含相位）整体覆盖。
         实测在隐空间上只要 strength>0 就把载密图 PSNR 从 35 dB 打到 14.6 dB，
         且 0.001~0.2 区间几乎不变 —— 说明损失来自"覆盖"而非幅度大小。
-      - "add"（推荐）：F[k] <- F[k] + d * s_j * e^{jφ_j}，d = strength * median(|F[k]|)。
+      - "add"（推荐）：F[k] <- F[k] + d * m_k * s_j * e^{jφ_j}，
+        d = strength * median(|F[k]|)。
         保留原始系数与幅度结构，只叠加一个相对幅度为 strength 的图案，
         载密图质量随 strength 平滑可控（这才是"隐写"该有的行为）。
+
+    use_mag_profile（仅在 add 模式下有效）：
+      按密钥幅度轮廓 m_k（`params["base_mag"]`，均值归一化为 1）分配逐频点幅度。
+      m_k 是接收端已知的，因此它同时充当**同步模板**（krd/sync.py）：几何攻击后
+      靠幅度相关即可把频点位置找回来。默认 False = 逐频点等幅（历史行为），
+      保证旧 checkpoint 的评测口径不变。
+      代价：轮廓非均匀 → 能量 +E[m²]（U(0.5,1.5) 约 +8% ≈ 0.35 dB），
+      换来的是几何鲁棒性（见 ITERATION_LOG §21）。
     """
     L_e = int(bits.numel())
     bins = params["bins"].to(x_T.device)
@@ -211,7 +227,10 @@ def inject_pattern(x_T: torch.Tensor, bits: torch.Tensor, params: dict,
         mirror = torch.stack([(-bins[:, 0]) % H, (-bins[:, 1]) % W], dim=1)
         _spec_put(F_, mirror, W, torch.conj(template) * scale)
     elif mode == "add":
-        delta = scale * sign * torch.exp(1j * phases)[None, :]
+        amp = scale
+        if use_mag_profile:
+            amp = amp * base_mag[None, :]
+        delta = amp * sign * torch.exp(1j * phases)[None, :]
         F_ = F_.clone()
         _spec_put(F_, bins, W, _spec_take(F_, bins, W) + delta)
         mirror = torch.stack([(-bins[:, 0]) % H, (-bins[:, 1]) % W], dim=1)

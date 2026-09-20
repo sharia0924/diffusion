@@ -1,0 +1,60 @@
+[
+  {
+    "attack": "clean",
+    "psnr_plain": 30.02554362626928,
+    "psnr_mag": 29.25598366940899,
+    "acc_plain": 1.0,
+    "acc_mag_sync": 0.5625,
+    "hit": [
+      false
+    ]
+  },
+  {
+    "attack": "jpeg50",
+    "psnr_plain": 29.931152267458458,
+    "psnr_mag": 29.33399097242489,
+    "acc_plain": 0.8958333333333334,
+    "acc_mag_sync": 0.5,
+    "hit": []
+  },
+  {
+    "attack": "rotate15",
+    "psnr_plain": 29.96007277772935,
+    "psnr_mag": 29.616665625050373,
+    "acc_plain": 0.625,
+    "acc_mag_sync": 0.5416666666666666,
+    "hit": [
+      false
+    ]
+  },
+  {
+    "attack": "translate2px",
+    "psnr_plain": 30.5486773121293,
+    "psnr_mag": 30.15894118623828,
+    "acc_plain": 0.4583333333333333,
+    "acc_mag_sync": 0.4166666666666667,
+    "hit": [
+      false
+    ]
+  },
+  {
+    "attack": "cropresize0.8",
+    "psnr_plain": 29.42158052819913,
+    "psnr_mag": 28.8121114159218,
+    "acc_plain": 0.5416666666666666,
+    "acc_mag_sync": 0.3541666666666667,
+    "hit": [
+      false
+    ]
+  },
+  {
+    "attack": "zoom1.1",
+    "psnr_plain": 28.488281944168918,
+    "psnr_mag": 27.748923706761722,
+    "acc_plain": 0.8541666666666666,
+    "acc_mag_sync": 0.5208333333333334,
+    "hit": [
+      false
+    ]
+  }
+]

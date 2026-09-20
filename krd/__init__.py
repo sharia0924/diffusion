@@ -2,9 +2,11 @@
 
 核心思想：
   - 隐藏端步数自由（DDIM inversion + 注入 + 采样，步数可任选）；
-  - 复原端由闭式公式（DDIM 更新式）驱动、步数固定；
-  - 密钥决定秘密比特在 x_T 频谱上的位置/相位（密钥门控），
+  - 复原端由闭式公式（DDIM 更新式）驱动，实测反演 20-200 步均可达天花板（§20.1）；
+  - 密钥决定秘密比特在 x_T 频谱上的位置/相位/幅度（密钥门控），
     无密钥/错密钥无法定位图案，解码退化为随机猜测；
+  - 密钥幅度轮廓同时充当**几何同步模板**（krd/sync.py），用来抵抗
+    旋转/平移/缩放造成的载波失配（§21）；
   - 复原解码器在可微失真（JPEG/噪声/模糊/缩放）下训练，获得鲁棒性。
 """
 
@@ -13,7 +15,7 @@ from .unet import UNet
 from .pattern import key_params, inject_pattern, ring_features, ecc_encode, ecc_collapse
 from .decoders import RingDecoder
 from .stego import TrajStego
-from . import perceptual, security
+from . import perceptual, security, sync
 
 __all__ = [
     "Schedule",
@@ -27,4 +29,5 @@ __all__ = [
     "TrajStego",
     "perceptual",
     "security",
+    "sync",
 ]

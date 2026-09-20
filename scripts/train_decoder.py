@@ -102,7 +102,9 @@ def load_stego(ckpt_path: str, device: str, n_bits: int = 16, ecc_reps: int = 3,
                with_vae: bool = False, res: int | None = None,
                inject_mode: str | None = None,
                r_max: int | None = None,
-               maximize_bpb: bool = True) -> TrajStego:
+               maximize_bpb: bool = True,
+               mag_profile: bool = False,
+               sync: bool = False) -> TrajStego:
     """加载 DDPM（可选 VAE）并构造 TrajStego。
 
     with_vae=True 且 checkpoint 是隐空间模型时，会一并加载 VAE 并挂到
@@ -137,7 +139,8 @@ def load_stego(ckpt_path: str, device: str, n_bits: int = 16, ecc_reps: int = 3,
     stego = TrajStego(unet, sched, n_bits=n_bits, ecc_reps=ecc_reps,
                       bins_per_bit=bins_per_bit, n_check_bits=n_check_bits,
                       res=int(_res), inject_mode=inject_mode or "replace",
-                      r_max=r_max, device=device)
+                      r_max=r_max, mag_profile=mag_profile, sync=sync,
+                      device=device)
     vae = None
     if with_vae:
         backend = margs.get("vae_backend", "none")

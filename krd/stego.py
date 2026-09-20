@@ -18,6 +18,7 @@ class TrajStego:
     def __init__(self, model, schedule, n_bits: int = 16, ecc_reps: int = 3,
                  bins_per_bit: int = 2, res: int = 32, n_check_bits: int = 32,
                  inject_mode: str = "replace", r_max: int | None = None,
+                 mag_profile: bool = False, sync: bool = False,
                  device="cpu"):
         self.model = model.to(device).eval()
         for p in self.model.parameters():
@@ -31,6 +32,10 @@ class TrajStego:
         self.n_check_bits = int(n_check_bits)
         # 注入模式：replace = 历史行为（覆盖系数，破坏性）；add = 加性（保留系数结构）
         self.inject_mode = inject_mode
+        # mag_profile：按密钥幅度轮廓分配逐频点幅度（该轮廓同时是接收端的同步模板）
+        self.mag_profile = bool(mag_profile)
+        # sync：接收端做几何对齐搜索（需要 mag_profile=True 才有可靠模板）
+        self.sync = bool(sync)
         self.msg_embed_bits = n_bits * ecc_reps            # ECC 展开后的消息槽位
         self.total_embed_bits = self.msg_embed_bits + self.n_check_bits
         self.n_pairs = self.total_embed_bits * bins_per_bit
@@ -136,7 +141,8 @@ class TrajStego:
             if i in inj_set:
                 x = torch.stack([
                     inject_pattern(x[j], bits_full[j], params[j],
-                                   float(strength[j]), mode=self.inject_mode)
+                                   float(strength[j]), mode=self.inject_mode,
+                                   use_mag_profile=self.mag_profile)
                     for j in range(B)
                 ])
         # 从最深的注入时刻采样回 x_0（同一段轨迹，步数不变）
@@ -163,10 +169,29 @@ class TrajStego:
 
     @torch.no_grad()
     def recover_features(self, stego: torch.Tensor, keys, rec_steps: int = 50,
-                         nonces=None) -> torch.Tensor:
+                         nonces=None, sync: bool | None = None) -> torch.Tensor:
+        """stego -> 密钥门控环带特征 (B, 2*n_pairs)。
+
+        sync=True 时先做几何对齐搜索（krd/sync.py）：用密钥幅度轮廓定位
+        (θ, σ)，再用相位斜坡定平移，然后在该对齐上取点。这解决的是
+        "旋转/平移/缩放的载波失配"（§20.4 的短板），因为频谱域可解析补偿，
+        不需要重过 VAE/UNet。
+        """
         nonces = self.resolve_nonces(nonces, stego.shape[0], keys=keys)
+        use_sync = self.sync if sync is None else bool(sync)
         x_T = self.invert_latents(stego, rec_steps)
-        return self.features_from_latents(x_T, keys, nonces)
+        if not use_sync:
+            return self.features_from_latents(x_T, keys, nonces)
+        from . import sync as _sync
+        feats = []
+        for i in range(x_T.shape[0]):
+            params = self.params_for(keys[i], nonces[i])
+            F_ = torch.fft.fftshift(torch.fft.fft2(x_T[i], norm="ortho"), dim=(-2, -1))
+            est = _sync.estimate_alignment(F_, params, self.res)
+            re, im, _, _ = _sync.gather_aligned(F_, params, self.res, est)
+            norm = torch.cat([re, im]).abs().median().clamp(min=1e-8)
+            feats.append(torch.cat([re, im]) / norm)
+        return torch.stack(feats).float()
 
     def collapse(self, logits_all: torch.Tensor) -> torch.Tensor:
         """(B, total_embed_bits) -> 消息部分 ECC 组内均值 -> (B, n_bits)。"""
