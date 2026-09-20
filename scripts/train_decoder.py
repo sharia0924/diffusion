@@ -322,7 +322,8 @@ def main():
               "rec_steps": args.rec_steps, "nonce_protocol": "keyed-v2",
               "geom_prob": args.geom_prob, "inject_mode": args.inject_mode,
               "inject_at": args.inject_at, "n_inject": args.n_inject,
-              "r_max": args.r_max, "eval_strength": args.eval_strength}
+              "r_max": args.r_max, "eval_strength": args.eval_strength,
+              "strength_min": args.strength_min, "strength_max": args.strength_max}
     for step in range(1, args.steps + 1):
         try:
             x0, _ = next(it)
