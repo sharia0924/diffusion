@@ -1,9 +1,9 @@
 """命令行隐藏/复原工具（支持像素空间与隐空间模型）。
 
 隐藏:  python scripts/run_stego.py hide --input cover.png --output stego.png \
-           --key my-secret --message "ZC" --ddpm-ckpt checkpoints/ddpm_cifar.pt
+           --key my-secret --message "ZC" --ddpm-ckpt checkpoints/ddpm_latent32.pt
 复原:  python scripts/run_stego.py recover --input stego.png --key my-secret \
-           --ddpm-ckpt checkpoints/ddpm_cifar.pt --decoder-ckpt checkpoints/decoder_best.pt \
+           --ddpm-ckpt checkpoints/ddpm_latent32.pt --decoder-ckpt checkpoints/decoder_latent32_v3_best.pt \
            [--counter 0] [--message "ZC"]
 
 隐空间模型（--ddpm-ckpt 指向 latent 模型时）：
@@ -47,8 +47,8 @@ def main():
     ap.add_argument("--message", default="")
     ap.add_argument("--counter", type=int, default=0,
                     help="nonce 计数器（公开参数）：nonce = H(key || counter)")
-    ap.add_argument("--ddpm-ckpt", default="checkpoints/ddpm_cifar.pt")
-    ap.add_argument("--decoder-ckpt", default="checkpoints/decoder_best.pt")
+    ap.add_argument("--ddpm-ckpt", default="checkpoints/ddpm_latent32.pt")
+    ap.add_argument("--decoder-ckpt", default="checkpoints/decoder_latent32_v3_best.pt")
     ap.add_argument("--hide-steps", type=int, default=50)
     ap.add_argument("--rec-steps", type=int, default=50)
     ap.add_argument("--strength", type=float, default=1.0)

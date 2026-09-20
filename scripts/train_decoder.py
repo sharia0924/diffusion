@@ -6,8 +6,16 @@
 失真下的隐式训练 + 密钥随机化 = 鲁棒性与密钥安全性的来源；
 --sched-noise-prob 开启"调度坐标加噪"（扩散再生攻击的训练代理）。
 
+默认值 = 当前已验证最优工作点（ITERATION_LOG §16/§18）：
+  8bit / ecc8 / check16 / bpb 自动顶满 4 → **N=32**；inject_at=0.35；n_inject=8；
+  strength∈[0.15,0.4]；S=150；--eval-strength 0.3（也是 _best.pt 的挑选口径）。
+
+注意（§17/§18 实测）：**匹配滤波（mf）接收端始终优于这个学习的头**，
+所以本脚本主要产出"学习式接收机"的消融结果，主结果请用 mf 接收
+（eval_* 脚本里的 `mf` / `mf@jpeg50` 列）。
+
 用法:
-  python scripts/train_decoder.py --ddpm-ckpt checkpoints/ddpm_cifar.pt --steps 3000
+  python scripts/train_decoder.py --ddpm-ckpt checkpoints/ddpm_latent32.pt --steps 1000
   python scripts/train_decoder.py --tiny   # 冒烟
 """
 
@@ -174,36 +182,42 @@ def images_to_stego_space(stego, x: torch.Tensor) -> torch.Tensor:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ddpm-ckpt", default="checkpoints/ddpm_cifar.pt")
-    ap.add_argument("--out", default="checkpoints/decoder.pt")
+    ap.add_argument("--ddpm-ckpt", default="checkpoints/ddpm_latent32.pt")
+    ap.add_argument("--out", default="checkpoints/decoder_latent32_v4.pt")
     ap.add_argument("--data-root", default="./data")
     ap.add_argument("--steps", type=int, default=1000)
     ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--lr", type=float, default=1e-3)
-    ap.add_argument("--hide-steps", type=int, default=50)
-    ap.add_argument("--rec-steps", type=int, default=50)
+    ap.add_argument("--hide-steps", type=int, default=150)
+    ap.add_argument("--rec-steps", type=int, default=150)
     ap.add_argument("--rec-jitter", type=int, default=0,
                     help=">0 时复原步数在 [rec-jitter, +jitter] 随机（步数灵活性鲁棒）")
-    ap.add_argument("--strength-min", type=float, default=0.6)
-    ap.add_argument("--strength-max", type=float, default=1.4)
+    # 默认值 = 当前已验证最优工作点（ITERATION_LOG §16/§18）：
+    #   8bit / ecc8 / check16 / bpb 自动顶到 4 → N=32；strength∈[0.15,0.4]；E_eval=0.3
+    # 想复现早期的像素空间实验就显式传旧参数（16bit/ecc3/check32/strength 0.6-1.4）。
+    ap.add_argument("--strength-min", type=float, default=0.15)
+    ap.add_argument("--strength-max", type=float, default=0.4)
     ap.add_argument("--distort-prob", type=float, default=0.8)
     ap.add_argument("--geom-prob", type=float, default=0.25,
                     help="随机失真中选中几何攻击（真裁剪/旋转/缩放/平移）的条件概率，"
                          "与 eval_robustness 的评测口径对齐")
-    ap.add_argument("--sched-noise-prob", type=float, default=0.0,
+    ap.add_argument("--sched-noise-prob", type=float, default=0.3,
                     help=">0 时以该概率把失真换成调度坐标加噪（扩散再生攻击的训练代理）")
-    ap.add_argument("--n-check-bits", type=int, default=32)
-    ap.add_argument("--n-bits", type=int, default=16,
-                    help="消息比特数（容量）；隐空间 16×16 频点预算有限时需下调")
-    ap.add_argument("--ecc-reps", type=int, default=3,
-                    help="重复码次数；槽位数 = n_bits×reps + n_check_bits")
+    ap.add_argument("--n-check-bits", type=int, default=16,
+                    help="密钥校验位；槽位预算 = n_bits×ecc + check，"
+                         "降到 16 可把每比特观测数 N 从 18 顶到 32（§16）")
+    ap.add_argument("--n-bits", type=int, default=8,
+                    help="消息比特数；实测 8bit 全面优于 16bit（clean +0.064）")
+    ap.add_argument("--ecc-reps", type=int, default=8,
+                    help="重复码次数；与 bpb 共同决定 N=bpb×ecc（当前最优 N=32）")
     ap.add_argument("--bins-per-bit", type=int, default=2,
-                    help="每槽占用的频点对数；超预算时会自动下调并打印提示")
-    ap.add_argument("--n-inject", type=int, default=1,
+                    help="每槽占用的频点对数；超预算时自动下调，"
+                         "且会**顶满预算**（maximize_bpb）")
+    ap.add_argument("--n-inject", type=int, default=8,
                     help="多步注入次数（下坡段等距注入 n 次）。总注入能量守恒："
                          "每次强度 = strength/n。实测同准确率下 PSNR +1~1.4 dB，"
                          "且不增加反演/采样步数")
-    ap.add_argument("--inject-at", type=float, default=1.0,
+    ap.add_argument("--inject-at", type=float, default=0.35,
                     help="注入时刻占反演轨迹的比例；1.0=末端(历史行为)，"
                          "0.25-0.5=轨迹中点（实测可显著降低采样对扰动的抹除）")
     ap.add_argument("--inject-mode", choices=["replace", "add"], default="add",

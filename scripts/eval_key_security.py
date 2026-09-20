@@ -9,8 +9,8 @@
   E. **盲水印检测 AUC**（隐写分析视角）：只给图，能否区分载密图与原图
   F. 密钥空间：分别报告"派生参数空间下界"与"密钥本身熵"
 
-  python scripts/eval_key_security.py --ddpm-ckpt checkpoints/ddpm_cifar.pt \
-      --decoder-ckpt checkpoints/decoder_best.pt --n 32 --n-wrong 200 \
+  python scripts/eval_key_security.py --ddpm-ckpt checkpoints/ddpm_latent32.pt \
+      --decoder-ckpt checkpoints/decoder_latent32_v3_best.pt --n 32 --n-wrong 200 \
       --out results/key_security.md
 """
 
@@ -34,8 +34,8 @@ from scripts.train_decoder import load_stego
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ddpm-ckpt", default="checkpoints/ddpm_cifar.pt")
-    ap.add_argument("--decoder-ckpt", default="checkpoints/decoder_best.pt")
+    ap.add_argument("--ddpm-ckpt", default="checkpoints/ddpm_latent32.pt")
+    ap.add_argument("--decoder-ckpt", default="checkpoints/decoder_latent32_v3_best.pt")
     ap.add_argument("--data-root", default="./data")
     ap.add_argument("--n", type=int, default=32, help="多图攻击与 BER 评测的图像数")
     ap.add_argument("--batch", type=int, default=16)

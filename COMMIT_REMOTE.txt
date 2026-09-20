@@ -1,0 +1,35 @@
+chore(remote-prep): 64x64 latent 全链路冒烟通过 + 去冗余 + 一键命令固化
+
+明天上远程 22GB 卡前的代码准备，四件事：
+
+1) 去冗余
+   - 删 12 个死脚本（像素空间时代诊断 / 一次性改写 / 本地 bench）：
+     _t.py, _refactor_evals.py, _refactor_decoder_ctor.py, bench_local.py,
+     cmp_probes.py, dbg_latent_hide.py, diag_floor.py, diag_floor2.py,
+     diag_tstar.py, diag_inject_ab.py, diag_psnr_probe.py, inspect_ckpt.py；
+   - 所有脚本的默认 checkpoint 从过期的 ddpm_cifar.pt / decoder_best.pt
+     改成当前前沿 ddpm_latent32.pt / decoder_latent32_v3_best.pt（共 50 处）。
+     此前不带参数直接跑 eval_* 会去加载旧工作点，属于"能跑但跑的不是这套"；
+   - train_decoder 默认值改成已验证工作点（8bit / ecc8 / check16 /
+     inject_at=0.35 / n_inject=8 / S=150 / strength∈[0.15,0.4] /
+     eval-strength=0.3），一键即最优配置。
+
+2) 修掉一个会误导冒烟的坑
+   --tiny 以前会强改架构（train_vae: ch_mults=(1,2,4) + downsample=2；
+   train_ddpm: base=32），导致"冒烟通过"不代表目标几何能跑
+   （实测：传 --downsample 0 --ch-mults 1 却拿到 16x16 latent），
+   还容易在 .last.pt 里留下架构不一致的断点。
+   现在 --tiny 只缩数据量 / 轮数 / 批大小，架构一律由命令行决定。
+
+3) 64x64 latent 全链路本地冒烟通过（GTX 1650 4GB）
+   VAE:     down=0 ch_mults=(1,) -> latent (4, 64, 64)
+   DDPM:    latent cache (2048, 4, 64, 64)，训练 256 步峰值显存 0.2 GiB
+   解码器:  [capacity] res=64 -> 1488 对预算 -> bpb=18 -> pairs=1440 -> N=144
+   即观测数从 N=32 提到 N=144（4.5 倍），这是 §16/§22 指出的唯一结构性杠杆。
+
+4) 一键命令固化
+   run_pipeline 补齐 LDM 的 DDPM 开关：--latent-ddpm-base / --ddpm-amp /
+   --ddpm-channels-last / --ddpm-grad-accum / --cudnn-benchmark / --num-workers；
+   --latent-strength-min 默认 0.05 -> 0.15、--sweep-strengths 默认改为工作点邻域；
+   新增 REMOTE_RUN.md（远程一键命令 + 判定门槛 + 三张必看表 + 报数口径 +
+   时间/显存预算 + 自检清单）；ITERATION_LOG 增 §23（含 sync 证伪后的路线回归）。

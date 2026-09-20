@@ -317,15 +317,20 @@ def main():
                     help="VAE 训练的输入像素尺寸；评测必须用同一尺寸")
     ap.add_argument("--latent-ddpm-epochs", type=int, default=100)
     ap.add_argument("--latent-ddpm-batch", type=int, default=64)
+    ap.add_argument("--latent-ddpm-base", type=int, default=64,
+                    help="隐空间 DDPM 的 UNet base 宽度；22GB 卡可上 96-128")
+    ap.add_argument("--num-workers", type=int, default=-1,
+                    help="DataLoader worker 数（远程 Linux 建议 4-8；-1 = 自动探测）")
     ap.add_argument("--latent-decoder-steps", type=int, default=1000)
     ap.add_argument("--latent-decoder-batch", type=int, default=16)
     ap.add_argument("--inject-mode", choices=["add", "replace"], default="add",
                     help="注入方式；隐空间必须用 add（replace 实测一加注入 PSNR 即崩到 15dB）")
-    ap.add_argument("--latent-strength-min", type=float, default=0.05,
-                    help="隐空间解码器训练的 strength 下界（工作点在低强度区）")
+    ap.add_argument("--latent-strength-min", type=float, default=0.15,
+                    help="隐空间解码器训练的 strength 下界（工作点在低强度区 0.15-0.4）")
     ap.add_argument("--latent-strength-max", type=float, default=0.4,
                     help="隐空间解码器训练的 strength 上界")
-    ap.add_argument("--sweep-strengths", default="0.005,0.02,0.05,0.1,0.3,1.0")
+    ap.add_argument("--sweep-strengths", default="0.15,0.2,0.25,0.3,0.35,0.4",
+                    help="strength 扫描点；默认只扫工作点邻域（旧的 0.005/1.0 已无用）")
     # ---- 隐空间解码器的工作点（三个机制都已单独验证有效，默认组合即当前最优）----
     # 注意：这几项必须"训练与评测同口径"。此前 latent_decoder 阶段不传它们，
     # 结果用默认参数（inject_at=1.0, n_inject=1, r_max=None）训出一个新解码器，
@@ -609,7 +614,15 @@ def main():
                        # （VAE 按 64² 训练 -> latent 32²；若这里漏传，DDPM 会在 16² 上训练，
                        #  评测按 DDPM 的 resize 推断像素尺寸也会错，得到无意义的 PSNR）。
                        "--resize", str(args.vae_resize),
+                       "--base", str(args.latent_ddpm_base),
                        "--rebuild-latent-cache"]
+                      + (["--amp", args.ddpm_amp] if args.ddpm_amp != "off" else [])
+                      + (["--channels-last"] if args.ddpm_channels_last else [])
+                      + (["--grad-accum", str(args.ddpm_grad_accum)]
+                         if args.ddpm_grad_accum > 1 else [])
+                      + (["--cudnn-benchmark"] if args.cudnn_benchmark else [])
+                      + (["--num-workers", str(args.num_workers)]
+                         if getattr(args, "num_workers", -1) >= 0 else [])
                       + (["--tiny"] if args.tiny else []),
                       done_marker=None if _need_more(lat_ddpm, args.latent_ddpm_epochs,
                                                      ".last.pt", "epoch")

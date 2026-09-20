@@ -13,8 +13,8 @@
 
 只报告 `ber` 与 `d_cover`/`lpips_cover` 的关系曲线，"攻击者困境"才成立。
 
-  python scripts/eval_regen.py --ddpm-ckpt checkpoints/ddpm_cifar.pt \
-      --decoder-ckpt checkpoints/decoder_best.pt --n 32 --out results/regen.md
+  python scripts/eval_regen.py --ddpm-ckpt checkpoints/ddpm_latent32.pt \
+      --decoder-ckpt checkpoints/decoder_latent32_v3_best.pt --n 32 --out results/regen.md
 """
 
 import argparse
@@ -37,8 +37,8 @@ from scripts.train_decoder import load_stego
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ddpm-ckpt", default="checkpoints/ddpm_cifar.pt")
-    ap.add_argument("--decoder-ckpt", default="checkpoints/decoder_best.pt")
+    ap.add_argument("--ddpm-ckpt", default="checkpoints/ddpm_latent32.pt")
+    ap.add_argument("--decoder-ckpt", default="checkpoints/decoder_latent32_v3_best.pt")
     ap.add_argument("--data-root", default="./data")
     ap.add_argument("--n", type=int, default=32)
     ap.add_argument("--batch", type=int, default=8)

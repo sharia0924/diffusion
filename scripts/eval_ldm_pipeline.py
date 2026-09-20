@@ -10,8 +10,8 @@
 
 用法:
   python scripts/eval_ldm_pipeline.py --vae-ckpt checkpoints/vae_cifar.pt \
-      --ddpm-ckpt checkpoints/ddpm_latent.pt --out results/ldm_pipeline.md
-  python scripts/eval_ldm_pipeline.py --pixel-baseline --ddpm-ckpt checkpoints/ddpm_cifar.pt
+      --ddpm-ckpt checkpoints/ddpm_latent32.pt --out results/ldm_pipeline.md
+  python scripts/eval_ldm_pipeline.py --pixel-baseline --ddpm-ckpt checkpoints/ddpm_latent32.pt
 """
 
 import argparse
@@ -35,9 +35,9 @@ from scripts.eval_setup import eval_setup
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ddpm-ckpt", default="checkpoints/ddpm_latent.pt")
+    ap.add_argument("--ddpm-ckpt", default="checkpoints/ddpm_latent32.pt")
     ap.add_argument("--vae-ckpt", default="checkpoints/vae_cifar.pt")
-    ap.add_argument("--decoder-ckpt", default="checkpoints/decoder_latent_best.pt")
+    ap.add_argument("--decoder-ckpt", default="checkpoints/decoder_latent32_v3_best.pt")
     ap.add_argument("--data-root", default="./data")
     ap.add_argument("--n", type=int, default=16)
     ap.add_argument("--batch", type=int, default=8)

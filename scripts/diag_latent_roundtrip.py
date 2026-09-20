@@ -11,7 +11,7 @@
 
 用法:
   python scripts/diag_latent_roundtrip.py --vae-ckpt checkpoints/vae16.pt \
-      --ddpm-ckpt checkpoints/ddpm_latent.pt --n 16
+      --ddpm-ckpt checkpoints/ddpm_latent32.pt --n 16
 """
 
 import argparse
@@ -32,7 +32,7 @@ from scripts.train_decoder import load_stego
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ddpm-ckpt", default="checkpoints/ddpm_latent.pt")
+    ap.add_argument("--ddpm-ckpt", default="checkpoints/ddpm_latent32.pt")
     ap.add_argument("--vae-ckpt", default=None,
                     help="默认从 ddpm checkpoint 的 args 里取 vae_ckpt")
     ap.add_argument("--data-root", default="./data")

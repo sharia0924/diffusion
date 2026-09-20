@@ -1,7 +1,7 @@
 """鲁棒性 / 隐秘性 / 密钥安全性 评测。
 
-  python scripts/eval_robustness.py --ddpm-ckpt checkpoints/ddpm_cifar.pt \
-      --decoder-ckpt checkpoints/decoder_best.pt --n 64 --out results/robustness.md
+  python scripts/eval_robustness.py --ddpm-ckpt checkpoints/ddpm_latent32.pt \
+      --decoder-ckpt checkpoints/decoder_latent32_v3_best.pt --n 64 --out results/robustness.md
 
 输出：各攻击下的比特准确率、stego 相对 cover 的 PSNR/SSIM/LPIPS、错密钥准确率（应≈50%）。
 
@@ -32,8 +32,8 @@ from scripts.train_decoder import load_stego
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ddpm-ckpt", default="checkpoints/ddpm_cifar.pt")
-    ap.add_argument("--decoder-ckpt", default="checkpoints/decoder_best.pt")
+    ap.add_argument("--ddpm-ckpt", default="checkpoints/ddpm_latent32.pt")
+    ap.add_argument("--decoder-ckpt", default="checkpoints/decoder_latent32_v3_best.pt")
     ap.add_argument("--data-root", default="./data")
     ap.add_argument("--n", type=int, default=64)
     ap.add_argument("--batch", type=int, default=16)

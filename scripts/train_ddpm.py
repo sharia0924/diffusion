@@ -181,8 +181,9 @@ def main():
 
     batch_size = args.batch_size
     if args.tiny:
-        args.epochs = min(args.epochs, 2)
-        args.base = min(args.base, 32)
+        # --tiny 只缩数据量/轮数/批大小，不改 UNet 架构（base 由命令行决定），
+        # 这样"冒烟通过"才真的说明目标配置能跑通（见 train_vae.py 的同款注释）。
+        args.epochs = min(args.epochs, 1)
         batch_size = min(batch_size, 64)
 
     model = UNet(in_ch=args.in_ch, base=args.base).to(device)

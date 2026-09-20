@@ -8,8 +8,8 @@
 v2 修复：nonce 协议改为自包含的 H(key||counter)；取数改用 eval_common，
 避免旧写法反复取同一批数据。
 
-  python scripts/eval_steps_grid.py --ddpm-ckpt checkpoints/ddpm_cifar.pt \
-      --decoder-ckpt checkpoints/decoder_best.pt --n 24 --out results/steps_grid.md
+  python scripts/eval_steps_grid.py --ddpm-ckpt checkpoints/ddpm_latent32.pt \
+      --decoder-ckpt checkpoints/decoder_latent32_v3_best.pt --n 24 --out results/steps_grid.md
 """
 
 import argparse
@@ -48,8 +48,8 @@ def decode_acc(stego, x_in, keys, nonces, rec_steps, decoder, bits, batch, io=No
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ddpm-ckpt", default="checkpoints/ddpm_cifar.pt")
-    ap.add_argument("--decoder-ckpt", default="checkpoints/decoder_best.pt")
+    ap.add_argument("--ddpm-ckpt", default="checkpoints/ddpm_latent32.pt")
+    ap.add_argument("--decoder-ckpt", default="checkpoints/decoder_latent32_v3_best.pt")
     ap.add_argument("--data-root", default="./data")
     ap.add_argument("--n", type=int, default=24)
     ap.add_argument("--batch", type=int, default=8)

@@ -67,10 +67,11 @@ def main():
     seed_everything(args.seed)
 
     if args.tiny:
-        args.epochs = min(args.epochs, 2)
-        args.base = min(args.base, 16)
-        args.ch_mults = "1,2,4"
-        args.downsample = 2
+        # 注意：--tiny 只缩**数据量与轮数**，不再改架构。
+        # 以前它会把 ch_mults/downsample 强改成 (1,2,4)/2，于是"冒烟通过"并不能
+        # 说明目标几何（例如 downsample=0 的 64×64 latent）能跑通，还容易在
+        # `.last.pt` 里留下架构不一致的断点。现在几何一律由命令行决定。
+        args.epochs = min(args.epochs, 1)
         args.batch_size = min(args.batch_size, 32)
     ch_mults = tuple(int(v) for v in args.ch_mults.split(","))
 

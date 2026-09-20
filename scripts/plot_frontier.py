@@ -2,8 +2,8 @@
 
 论文主图素材：每方法一条前沿线，同坐标系对比 Tree-Ring/ZoDiac/WAM 等。
 
-  python scripts/plot_frontier.py --ddpm-ckpt checkpoints/ddpm_cifar.pt \
-      --decoder-ckpt checkpoints/decoder_best.pt --n 32 --out results/frontier.md
+  python scripts/plot_frontier.py --ddpm-ckpt checkpoints/ddpm_latent32.pt \
+      --decoder-ckpt checkpoints/decoder_latent32_v3_best.pt --n 32 --out results/frontier.md
 """
 
 import argparse
@@ -30,8 +30,8 @@ from scripts.train_decoder import load_stego
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ddpm-ckpt", default="checkpoints/ddpm_cifar.pt")
-    ap.add_argument("--decoder-ckpt", default="checkpoints/decoder_best.pt")
+    ap.add_argument("--ddpm-ckpt", default="checkpoints/ddpm_latent32.pt")
+    ap.add_argument("--decoder-ckpt", default="checkpoints/decoder_latent32_v3_best.pt")
     ap.add_argument("--data-root", default="./data")
     ap.add_argument("--n", type=int, default=32)
     ap.add_argument("--batch", type=int, default=8)

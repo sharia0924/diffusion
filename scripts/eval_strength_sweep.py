@@ -7,9 +7,9 @@
 从而回答：**能否在 35 dB 附近还保持解码可用**。
 
 用法:
-  python scripts/eval_strength_sweep.py --ddpm-ckpt checkpoints/ddpm_latent.pt \
-      --decoder-ckpt checkpoints/decoder_latent_best.pt --out results/strip_latent.md
-  python scripts/eval_strength_sweep.py --pixel-baseline --ddpm-ckpt checkpoints/ddpm_cifar.pt
+  python scripts/eval_strength_sweep.py --ddpm-ckpt checkpoints/ddpm_latent32.pt \
+      --decoder-ckpt checkpoints/decoder_latent32_v3_best.pt --out results/strip_latent.md
+  python scripts/eval_strength_sweep.py --pixel-baseline --ddpm-ckpt checkpoints/ddpm_latent32.pt
 """
 
 import argparse
@@ -33,8 +33,8 @@ from scripts.eval_setup import eval_setup
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ddpm-ckpt", default="checkpoints/ddpm_latent.pt")
-    ap.add_argument("--decoder-ckpt", default="checkpoints/decoder_latent_best.pt")
+    ap.add_argument("--ddpm-ckpt", default="checkpoints/ddpm_latent32.pt")
+    ap.add_argument("--decoder-ckpt", default="checkpoints/decoder_latent32_v3_best.pt")
     ap.add_argument("--data-root", default="./data")
     ap.add_argument("--n", type=int, default=16)
     ap.add_argument("--batch", type=int, default=8)

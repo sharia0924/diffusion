@@ -1239,6 +1239,54 @@ clean 从 1.000 掉到 0.562、PSNR 还要多付 0.77 dB（比能量预算的 0.
   本轮已经实现的 `krd/sync.py` / `mag_profile` 全部默认关闭并标注"已证伪"，
   等 latent 扩到 64×64 后可以再拿同一套脚本复验一次（这是它的第二次机会）。
 
+---
+
+## 23. 远程训练前的代码准备：64×64 latent 全链路冒烟通过（2026-09-20 深夜）
+
+明天在远程 22GB 卡上要跑的是 64×64 latent，所以先把整条链在本机（4GB）用
+`--tiny` 预算跑通一遍，避免到远程才发现几何/容量/接口问题。
+
+### 23.1 修掉了一个会误导冒烟的坑：`--tiny` 以前会改架构
+
+`train_vae.py --tiny` 原来会把 `ch_mults` 强改成 `(1,2,4)`、`downsample` 强改成 2；
+`train_ddpm.py --tiny` 会把 `base` 强改成 32。后果是"冒烟通过"**并不能说明目标几何能跑**
+（我第一次冒烟就被骗了：传 `--downsample 0 --ch-mults 1` 却得到 16×16 latent），
+而且 `.last.pt` 里会留下与正式训练不一致的架构。
+现在 `--tiny` **只缩数据量与轮数/批大小**，架构一律由命令行决定。
+
+### 23.2 全链路冒烟结果（本机 GTX 1650 4GB）
+
+| 阶段 | 命令要点 | 结果 |
+|---|---|---|
+| VAE | `--resize 64 --downsample 0 --ch-mults 1 --base 32 --tiny` | `[setup] down=0 ch_mults=(1,)` → **latent (4, 64, 64)** ✓ |
+| latent DDPM | `--vae-backend native --vae-ckpt ... --resize 64 --base 32 --tiny` | latent cache `(2048, 4, 64, 64)`，训练 256 步峰值显存 **0.2 GiB** ✓ |
+| 解码器 | `--ddpm-ckpt ..._smoke_ddpm64.pt --steps 5 --tiny` | `[capacity] res=64 r_max=None 1488 对 → n_bits=8 ecc=8 check=16 **bpb=18** (slots=80, **pairs=1440**)` ✓ |
+
+也就是 64×64 latent 下 **N = bpb×ecc = 144**，是当前 32×32 latent（N=32）的 **4.5 倍**，
+频点预算从 342 对涨到 **1488 对**。这正是 §16/§22 指出的唯一结构性杠杆：
+观测数与"未来同步可行性"都随 latent 面积增长。
+
+### 23.3 同时做的清理（"去冗余"）
+
+- **删除 12 个死脚本**：`_t.py` / `_refactor_evals.py` / `_refactor_decoder_ctor.py` /
+  `bench_local.py` / `cmp_probes.py` / `dbg_latent_hide.py` / `diag_floor.py` /
+  `diag_floor2.py` / `diag_tstar.py` / `diag_inject_ab.py` / `diag_psnr_probe.py` /
+  `inspect_ckpt.py`（像素空间时代的诊断与一次性改写脚本，已被 §12-§22 的 LDM 诊断取代）；
+- **把所有脚本的默认 checkpoint 指向当前前沿**：以前 eval_* 的默认还是
+  `checkpoints/ddpm_cifar.pt` / `decoder_best.pt`（不存在或旧工作点），
+  不带参数直接跑等于"能跑但跑的不是这套"；现在统一为
+  `checkpoints/ddpm_latent32.pt` + `checkpoints/decoder_latent32_v3_best.pt`；
+- **`train_decoder.py` 的默认值改成已验证工作点**（8bit / ecc8 / check16 /
+  inject_at=0.35 / n_inject=8 / S=150 / strength∈[0.15,0.4] / eval-strength=0.3），
+  这样"一键训练"不需要再堆参数；
+- **`run_pipeline.py` 补齐 LDM 的 DDPM 训练开关**（`--latent-ddpm-base`、
+  `--ddpm-amp`、`--ddpm-channels-last`、`--ddpm-grad-accum`、`--cudnn-benchmark`、
+  `--num-workers`），并把 `--sweep-strengths` 默认改成工作点邻域；
+- 新增 **`REMOTE_RUN.md`**：远程一键命令、判定门槛（VAE ≥51 dB、DDPM ≥42 dB、
+  capacity 行长什么样）、三张必看评测表、三条报数口径、时间/显存预算、
+  以及"远程也先跑 `--tiny` 冒烟 + 5 个回归测试"的自检清单。
+
+
 
 
 

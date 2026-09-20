@@ -5,8 +5,8 @@
 
 v2 修复：nonce 协议改为自包含的 H(key||counter)；取数改用 eval_common。
 
-  python scripts/eval_step_mismatch.py --ddpm-ckpt checkpoints/ddpm_cifar.pt \
-      --decoder-ckpt checkpoints/decoder_best.pt --out results/step_mismatch.md
+  python scripts/eval_step_mismatch.py --ddpm-ckpt checkpoints/ddpm_latent32.pt \
+      --decoder-ckpt checkpoints/decoder_latent32_v3_best.pt --out results/step_mismatch.md
 """
 
 import argparse
@@ -29,8 +29,8 @@ from scripts.train_decoder import load_stego
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ddpm-ckpt", default="checkpoints/ddpm_cifar.pt")
-    ap.add_argument("--decoder-ckpt", default="checkpoints/decoder_best.pt")
+    ap.add_argument("--ddpm-ckpt", default="checkpoints/ddpm_latent32.pt")
+    ap.add_argument("--decoder-ckpt", default="checkpoints/decoder_latent32_v3_best.pt")
     ap.add_argument("--data-root", default="./data")
     ap.add_argument("--n", type=int, default=32)
     ap.add_argument("--batch", type=int, default=8)
