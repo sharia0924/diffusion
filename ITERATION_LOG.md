@@ -868,6 +868,56 @@ MSE 对重尾误差极其敏感，于是这个数字**随批大小 n 漂移**：
 (3) **更大的 latent**（N 的天花板 ∝ latent 边长²，32×32→64×64 就是 ×4）——上远程 2080；
 (4) 降低载荷或放宽 JPEG 质量（改变论文声明）。
 
+---
+
+## 16. 把 N 顶满的实测结果：等 PSNR 下 jpeg50 +0.043、jpeg75 +0.090（2026-09-20）
+
+`scripts/diag_ecc_frontier.py`（n=32，S=150，n_inject=8，inject_at=0.35，r_max 不限，
+8bit，matched-filter 接收，secant 把每个配置都调到**同一载密图 PSNR ≈ 30 dB**）：
+
+| ecc | check | 槽位 | bpb | pairs | **N** | PSNR | SSIM | mf clean | mf@jpeg50 | mf@jpeg75 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 3 | 32（旧） | 56 | 6 | 336 | 18 | 29.95 | 0.8893 | 0.996 | 0.836 | 0.844 |
+| 3 | 16 | 40 | 8 | 320 | 24 | 29.94 | 0.8896 | **1.000** | 0.859 | 0.910 |
+| 5 | 16 | 56 | 6 | 336 | 30 | 29.70 | 0.8858 | 0.996 | 0.840 | 0.883 |
+| **8** | **16** | **80** | **4** | **320** | **32** | **30.11** | **0.8933** | **1.000** | **0.879** | **0.934** |
+| 12 | 16 | 112 | 3 | 336 | 36 | 30.14 | 0.8932 | 0.996 | **0.891** | 0.898 |
+
+**结论**：
+
+1. **"把每个比特摊到更多频点上"确实有效**：同一 PSNR 下，N 从 18 提到 32
+   （ecc 3→8、check 32→16、bpb 6→4）把 jpeg50 从 0.836 抬到 **0.879**、
+   jpeg75 从 0.844 抬到 **0.934**，clean 从 0.996 到 1.000，SSIM 还略有提升。
+   这是目前**唯一一个在等 PSNR 下真正左移前沿**的改动，且 mf 接收端零训练即可享受。
+2. 但增益远小于 10log10(32/18)=2.5 dB 的理论值 —— 与 §13 的结论一致：
+   观测之间误差相关，"多攒观测"的兑现率不高（N 提高 78% 只换来 jpeg50 +0.043）。
+   **N=36 在 jpeg75 上反而不如 N=32**，说明已经接近饱和。
+3. 代价：check 从 32 位降到 16 位 → 错密钥虚警率从 2⁻³² 变 2⁻¹⁶（1.5e-5），
+   对 P1 的密钥安全声明仍然足够。
+4. **选定新工作点**：`n_bits=8, ecc=8, n_check_bits=16, bpb=4（自动）, r_max 不限,
+   inject_at=0.35, n_inject=8, S=150` → **N=32**。
+
+### 16.1 已启动：v3 解码器（新工作点 + mf 残差 + 1000 步 + 按工作点选点）
+
+```
+python scripts/train_decoder.py --ddpm-ckpt checkpoints/ddpm_latent32.pt \
+  --out checkpoints/decoder_latent32_v3.pt --steps 1000 --batch-size 16 \
+  --n-bits 8 --ecc-reps 8 --n-check-bits 16 --inject-mode add \
+  --inject-at 0.35 --n-inject 8 --strength-min 0.15 --strength-max 0.4 \
+  --sched-noise-prob 0.3 --geom-prob 0.25 --hide-steps 150 --rec-steps 150 \
+  --eval-strength 0.3 --eval-every 200 --mf-residual
+```
+
+四处同时改：①N=32 的新工作点；②`--mf-residual`（初始即等于 mf，训练只学残差）；
+③步数 600→1000（旧解码器欠拟合）；④`--eval-strength 0.3` 让 `_best.pt`
+**按工作点挑选**（旧运行硬编码 1.0，选点口径本身就是错的）。
+
+顺带修掉了流水线的第六处同类问题：`run_pipeline.py --ldm` 的 latent_decoder 阶段
+**从不传 `--n-bits/--ecc-reps/--n-check-bits/--mf-residual`**，也就是从流水线跑出来的
+永远是"16bit / ecc3 / check32 / 无残差"的旧配置，而不是当前前沿。现在全部贯通，
+默认值也改成当前最优（8bit / ecc8 / check16 / mf_residual / r_max=0）。
+
+
 
 
 

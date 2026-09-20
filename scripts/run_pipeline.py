@@ -330,14 +330,31 @@ def main():
     # 注意：这几项必须"训练与评测同口径"。此前 latent_decoder 阶段不传它们，
     # 结果用默认参数（inject_at=1.0, n_inject=1, r_max=None）训出一个新解码器，
     # 却与已验证的注入点在评测端对不上（见 tests/strength_semantics_test.py 注释）。
-    ap.add_argument("--latent-decoder-name", default="decoder_latent32_combo",
+    ap.add_argument("--latent-decoder-name", default="decoder_latent32_v3",
                     help="隐空间解码器 checkpoint 基名（不含 .pt）；评测阶段读的也是它")
+    ap.add_argument("--n-bits", type=int, default=8,
+                    help="消息比特数（实测 8bit 全面优于 16bit：clean +0.064）")
+    ap.add_argument("--ecc-reps", type=int, default=8,
+                    help="重复码重复次数。与 bpb 一起决定每比特观测数 N=bpb×ecc；"
+                         "实测把 N 从 18 提到 32（ecc 8, check 16, bpb 4）可在同一 PSNR 下"
+                         "把 jpeg50 从 0.836 抬到 0.879、jpeg75 从 0.844 抬到 0.934")
+    ap.add_argument("--n-check-bits", type=int, default=16,
+                    help="密钥校验比特数；槽位预算 = n_bits×ecc + check，"
+                         "降低它可把 N 顶得更高，代价是错密钥虚警率 2^-check")
+    ap.add_argument("--mf-residual", action="store_true", default=True,
+                    help="解码头加 matched-filter 残差路径（默认开：初始即等于 mf，"
+                         "训练只学残差）")
+    ap.add_argument("--no-mf-residual", dest="mf_residual", action="store_false",
+                    help="关闭 mf 残差路径（复现旧解码器时用）")
     ap.add_argument("--inject-at", type=float, default=0.35,
                     help="注入时刻（占反演轨迹的比例）；实测 0.35 优于末端 1.0")
     ap.add_argument("--n-inject", type=int, default=8,
                     help="多步注入次数；零额外计算，同准确率下 PSNR 更高")
-    ap.add_argument("--r-max", type=int, default=13,
-                    help="环带外径上限（把载波搬到低频以抗 JPEG）；0 = 关闭")
+    ap.add_argument("--r-max", type=int, default=0,
+                    help="环带外径上限；0 = 不设上限。**实测（等 PSNR, n=32）r_max 对"
+                         "jpeg50/jpeg75 没有稳定收益，clean 准确率只随观测数 N 上升，"
+                         "故默认关闭；此前认为 r_max=13 更好是 strength 逐系数幅度"
+                         "造成的能量口径假象**")
     ap.add_argument("--eval-strength", type=float, default=0.3,
                     help="训练中 eval 的总注入能量（也是 _best.pt 的挑选口径）；"
                          "必须落在 [latent-strength-min, latent-strength-max] 内")
@@ -599,14 +616,18 @@ def main():
                       else lat_ddpm)
 
         if "latent_decoder" in stages:
-            print(f"[latent_decoder] 工作点: inject_at={args.inject_at} "
+            print(f"[latent_decoder] 工作点: 载荷={args.n_bits}bit ecc={args.ecc_reps} "
+                  f"check={args.n_check_bits} inject_at={args.inject_at} "
                   f"n_inject={args.n_inject} r_max={args.r_max} "
-                  f"-> {os.path.basename(lat_dec)}")
+                  f"mf_residual={args.mf_residual} -> {os.path.basename(lat_dec)}")
             run_stage("latent_decoder", "train_decoder.py",
                       ["--ddpm-ckpt", lat_ddpm, "--out", lat_dec,
                        "--data-root", args.data_root,
                        "--steps", str(args.latent_decoder_steps),
                        "--batch-size", str(args.latent_decoder_batch),
+                       "--n-bits", str(args.n_bits),
+                       "--ecc-reps", str(args.ecc_reps),
+                       "--n-check-bits", str(args.n_check_bits),
                        "--inject-mode", args.inject_mode,
                        "--strength-min", str(args.latent_strength_min),
                        "--strength-max", str(args.latent_strength_max),
@@ -615,7 +636,9 @@ def main():
                        "--hide-steps", str(args.hide_steps),
                        "--rec-steps", str(args.rec_steps),
                        "--eval-strength", str(args.eval_strength),
-                       "--eval-every", "250"] + lat_workpoint
+                       "--eval-every", "250"]
+                      + (["--mf-residual"] if args.mf_residual else [])
+                      + lat_workpoint
                       + (["--tiny"] if args.tiny else []),
                       done_marker=lat_dec)
 
