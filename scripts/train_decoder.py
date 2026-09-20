@@ -101,12 +101,20 @@ def load_stego(ckpt_path: str, device: str, n_bits: int = 16, ecc_reps: int = 3,
                bins_per_bit: int = 2, n_check_bits: int = 32,
                with_vae: bool = False, res: int | None = None,
                inject_mode: str | None = None,
-               r_max: int | None = None) -> TrajStego:
+               r_max: int | None = None,
+               maximize_bpb: bool = True) -> TrajStego:
     """加载 DDPM（可选 VAE）并构造 TrajStego。
 
     with_vae=True 且 checkpoint 是隐空间模型时，会一并加载 VAE 并挂到
     `stego.vae` 上，供"潜变量 -> 图像"的变换（train_decoder.py 的输入必须是
     像素空间，因为 JPEG/噪声等失真是定义在像素上的）。
+
+    maximize_bpb：
+      - True（默认，训练路径）：在频点预算内把 bpb 顶到最大。**注意**这会改变
+        n_pairs，因此若调用方手里还有一份"训练时记录的 config"（含 n_pairs），
+        两者会不一致——评测端必须传 False（见 eval_setup），否则
+        "用 cfg 的 n_pairs 建解码头、用顶满后的 n_pairs 提特征"必然形状不符。
+      - False（评测路径）：严格按传入的 bpb 构造，保证与解码器 config 一致。
     """
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=True)
     margs = ckpt.get("args", {})
@@ -124,7 +132,8 @@ def load_stego(ckpt_path: str, device: str, n_bits: int = 16, ecc_reps: int = 3,
     _res = res or margs.get("latent_res") or (lshape[1] if lshape else 32)
     # 频点预算不足时自适应（像素空间 res=32 预算充足，参数不变）；r_max 收窄环带预算
     n_bits, ecc_reps, n_check_bits, bins_per_bit = fit_capacity(
-        int(_res), n_bits, ecc_reps, n_check_bits, bins_per_bit, r_max=r_max)
+        int(_res), n_bits, ecc_reps, n_check_bits, bins_per_bit, r_max=r_max,
+        maximize_bpb=maximize_bpb)
     stego = TrajStego(unet, sched, n_bits=n_bits, ecc_reps=ecc_reps,
                       bins_per_bit=bins_per_bit, n_check_bits=n_check_bits,
                       res=int(_res), inject_mode=inject_mode or "replace",

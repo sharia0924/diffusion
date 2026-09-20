@@ -62,12 +62,24 @@ def eval_setup(ddpm_ckpt: str, data_root: str, batch_size: int, device: str,
     pixel_res = pixel_res_of(ddpm_ckpt)
     cfg = load_decoder_cfg(decoder_ckpt)
     c = cfg or {}
+    # maximize_bpb=False：严格按解码器 config 记录的 (bpb, n_pairs) 构造。
+    # 若这里让它“顶满预算”，旧 checkpoint（如 16bit/bpb 2）会被顶到 bpb 4，
+    # n_pairs 从 160 变 320，而解码头仍按 cfg 的 n_pairs=160 构造 →
+    # 特征维度不符。verify_results.py 的 R4 就是这样崩的
+    # （mat1 and mat2 shapes cannot be multiplied: 8x640 vs 320x512）。
     stego = load_stego(ddpm_ckpt, device, with_vae=True,
                        n_bits=c.get("n_bits", 16), ecc_reps=c.get("ecc", 3),
                        bins_per_bit=c.get("bpb", 2),
                        n_check_bits=c.get("n_check_bits", 32),
                        inject_mode=c.get("inject_mode", "replace"),
-                       r_max=c.get("r_max"))
+                       r_max=c.get("r_max"), maximize_bpb=False)
+    if cfg and cfg.get("n_pairs") and int(stego.n_pairs) != int(cfg["n_pairs"]):
+        raise SystemExit(
+            f"[eval_setup] 容量口径不一致：解码器 config 记录 n_pairs={cfg['n_pairs']}，"
+            f"但按同一 config 构造出的 stego 是 n_pairs={stego.n_pairs} "
+            f"(n_bits={stego.n_bits} ecc={stego.ecc} bpb={stego.bpb} "
+            f"check={stego.n_check_bits} r_max={c.get('r_max')})。"
+            f"这会让解码头维度与提取到的特征维度不符，必须先修好配置再评测。")
     io = StegoIO(stego, pixel_res=pixel_res, inject_at=c.get("inject_at", 1.0),
                  n_inject=c.get("n_inject", 1))
     if c.get("inject_at") is not None:
