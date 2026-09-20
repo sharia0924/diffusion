@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from krd import RingDecoder
 from krd.distortions import STANDARD_ATTACKS, apply_attack
-from krd.metrics import bit_accuracy, psnr, ssim
+from krd.metrics import bit_accuracy, psnr, psnr_mean, ssim
 from krd.perceptual import lpips, lpips_backend
 from krd.utils import seed_everything, token_key
 from scripts.eval_common import cifar_loader, make_eval_inputs
@@ -94,10 +94,12 @@ def main():
     base_rt = io.baseline_psnr(covers)
 
     p = psnr(stegos_px, covers)
+    p_img = psnr_mean(stegos_px, covers)
     s = ssim(stegos_px, covers)
     lp = lpips(stegos_px, covers)
     lp_s = "n/a" if lp is None else f"{lp:.4f}"
-    print(f"stego quality: PSNR {p:.2f} dB, SSIM {s:.4f}, LPIPS {lp_s} (n={args.n})")
+    print(f"stego quality: PSNR {p:.2f} dB (逐图平均 {p_img:.2f}), SSIM {s:.4f}, "
+          f"LPIPS {lp_s} (n={args.n})")
     if io.latent:
         print(f"[latent] VAE 往返上限（无嵌入）: PSNR {base_rt:.2f} dB；"
               f"容量报告: {io.capacity_report(cfg['n_bits'])}")
@@ -149,7 +151,8 @@ def main():
             f.write(f"- **VAE 往返上限（无嵌入）: PSNR {base_rt:.2f} dB**"
                     f" —— 这是整条链路的天花板\n")
             f.write(f"- 容量报告: {io.capacity_report(cfg['n_bits'])}\n")
-        f.write(f"- stego 质量: **PSNR {p:.2f} dB / SSIM {s:.4f} / LPIPS {lp_s}**"
+        f.write(f"- stego 质量: **PSNR {p:.2f} dB（逐图平均 {p_img:.2f} dB）/ "
+                f"SSIM {s:.4f} / LPIPS {lp_s}**"
                 f"（LPIPS backend: {lpips_backend() or 'unavailable'}）\n\n")
         f.write("| 攻击 | 比特准确率 |\n|---|---|\n")
         for name, a in rows:

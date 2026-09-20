@@ -7,11 +7,34 @@ import torch.nn.functional as F
 
 
 def psnr(a: torch.Tensor, b: torch.Tensor) -> float:
+    """**批内全局 MSE** 定义的 PSNR（历史口径，保留以保证旧结果可复现）。
+
+    ⚠️ 口径警告：全局 MSE 是"先对所有图像求均方误差、再取 log"，
+    而 MSE 对重尾误差极其敏感——一张坏图就能吃掉好几 dB，且**结果随批大小 n 变化**
+    （n 越大，坏图被摊薄，PSNR 越高）。实测同一配置 n=4 与 n=24 可差 1.3 dB。
+    因此跨运行比较 PSNR 必须固定 n；论文报数建议改用 `psnr_mean`（逐图 PSNR 再平均，
+    这是文献通行口径，通常比全局口径高 0.5-1.5 dB）。
+    """
     mse = ((a - b) ** 2).mean().item()
     if mse <= 1e-12:
         return float("inf")
     # [-1,1] 动态范围 2，等价于 [0,255] 的 255 峰值计算
     return 10.0 * math.log10(4.0 / mse)
+
+
+def psnr_mean(a: torch.Tensor, b: torch.Tensor) -> float:
+    """逐图 PSNR 再取平均（文献通行口径，与 n 的关联弱得多）。
+
+    a, b: (B,C,H,W)。B=1 时与 `psnr` 相同。
+    """
+    if a.dim() == 3:
+        return psnr(a, b)
+    per = []
+    for i in range(a.shape[0]):
+        mse = ((a[i] - b[i]) ** 2).mean().item()
+        per.append(float("inf") if mse <= 1e-12 else 10.0 * math.log10(4.0 / mse))
+    finite = [p for p in per if p != float("inf")]
+    return sum(finite) / len(finite) if finite else float("inf")
 
 
 _GAUSS_WIN = 11

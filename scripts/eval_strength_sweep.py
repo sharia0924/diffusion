@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from krd import RingDecoder
 from krd.distortions import apply_attack
-from krd.metrics import bit_accuracy, psnr, ssim
+from krd.metrics import bit_accuracy, psnr, psnr_mean, ssim
 from krd.perceptual import lpips
 from krd.pattern import ecc_collapse
 from krd.utils import derive_nonces_from_keys, seed_everything, token_key
@@ -133,12 +133,14 @@ def main():
             for i in range(0, args.n, args.batch)
         ])
         px = io.to_pixels(sg)
-        row = {"strength": st, "psnr": psnr(px, covers), "ssim": ssim(px, covers),
+        row = {"strength": st, "psnr": psnr(px, covers),
+               "psnr_img": psnr_mean(px, covers), "ssim": ssim(px, covers),
                "lpips": lpips(px, covers), "mf": mf_acc(sg),
                "dec_clean": dec_acc(sg), "dec_jpeg50": dec_acc(sg, ("jpeg", 50))}
         rows.append(row)
         lp = row["lpips"]
-        print(f"strength={st:<7}: PSNR {row['psnr']:6.2f} dB SSIM {row['ssim']:.4f} "
+        print(f"strength={st:<7}: PSNR {row['psnr']:6.2f} dB "
+              f"(逐图平均 {row['psnr_img']:6.2f}) SSIM {row['ssim']:.4f} "
               f"LPIPS {'n/a' if lp is None else f'{lp:.4f}'} | mf {row['mf']:.3f} "
               f"dec {row['dec_clean']:.3f} jpeg50 {row['dec_jpeg50']:.3f}", flush=True)
 
@@ -146,16 +148,20 @@ def main():
     with open(args.out, "w", encoding="utf-8") as f:
         f.write("# strength 扫描（载密图质量 vs 准确率）\n\n")
         f.write(f"- 空间: {io.describe()}，pixel_res={pixel_res}\n")
-        f.write(f"- 无嵌入往返上限: PSNR **{base:.2f} dB**\n")
+        f.write(f"- 无嵌入往返上限: PSNR **{base:.2f} dB**（全局口径）\n")
         f.write(f"- 容量: {io.capacity_report(stego.total_embed_bits)}\n")
         f.write(f"- 样本 n={args.n}, S_hide={args.hide_steps}, S_rec={args.rec_steps}\n")
         f.write(f"- 注入口径: inject_at={io.inject_at}, n_inject={io.n_inject}, "
-                f"inject_mode={stego.inject_mode}, r_max={getattr(stego, 'r_max', None)}\n\n")
-        f.write("| strength | PSNR | SSIM | LPIPS | mf | dec clean | dec jpeg50 |\n")
-        f.write("|---|---|---|---|---|---|---|\n")
+                f"inject_mode={stego.inject_mode}, r_max={getattr(stego, 'r_max', None)}\n")
+        f.write("- PSNR 口径: `PSNR` = 批内全局 MSE（历史口径，随 n 漂移）；"
+                "`PSNR_img` = 逐图 PSNR 再平均（文献通行口径，通常更高）\n\n")
+        f.write("| strength | PSNR | PSNR_img | SSIM | LPIPS | mf | dec clean | "
+                "dec jpeg50 |\n")
+        f.write("|---|---|---|---|---|---|---|---|\n")
         for r in rows:
             lp = r["lpips"]
-            f.write(f"| {r['strength']} | {r['psnr']:.2f} | {r['ssim']:.4f} | "
+            f.write(f"| {r['strength']} | {r['psnr']:.2f} | {r['psnr_img']:.2f} | "
+                    f"{r['ssim']:.4f} | "
                     f"{'n/a' if lp is None else f'{lp:.4f}'} | {r['mf']:.3f} | "
                     f"{r['dec_clean']:.3f} | {r['dec_jpeg50']:.3f} |\n")
     print(f"saved -> {args.out}")
