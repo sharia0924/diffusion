@@ -373,7 +373,7 @@ def main():
     ap.add_argument("--frontier-strengths", default="0.5,0.75,1.0,1.25,1.5,2.0")
     args = ap.parse_args()
 
-    if args.tiny:  # 冒烟: 全部缩到最小
+    if args.tiny:  # 冒烟: 只缩**数据量/步数/评测规模**，不动架构与几何
         args.ddpm_epochs, args.ddpm_batch = min(args.ddpm_epochs, 1), min(args.ddpm_batch, 64)
         args.decoder_steps, args.decoder_batch = min(args.decoder_steps, 30), min(args.decoder_batch, 4)
         args.hide_steps = args.rec_steps = 25
@@ -384,12 +384,12 @@ def main():
         args.mismatch_rec_list = "4,10,25"
         args.regen_t_regs, args.regen_steps_list = "400", "25"
         args.frontier_strengths = "0.5,1.0"
-        # LDM 也缩到冒烟规模
-        args.vae_epochs = min(args.vae_epochs, 2)
-        args.vae_base = min(args.vae_base, 32)
-        args.vae_resize = 32
-        args.vae_downsample = 1
-        args.latent_ddpm_epochs, args.latent_ddpm_batch = 2, 64
+        # LDM 也缩到冒烟规模。**注意**：这里以前会把 vae_resize/downsample/base
+        # 一并改掉，于是"冒烟命令里显式写的 64×64/downsample 0"被静默覆盖，
+        # 甚至凑出 (downsample=1, ch_mults=1) 这种被 NativeVAE 断言拒绝的组合。
+        # 冒烟的目的正是验证目标几何能跑，所以几何/架构一律不在这里改。
+        args.vae_epochs = min(args.vae_epochs, 1)
+        args.latent_ddpm_epochs, args.latent_ddpm_batch = 1, min(args.latent_ddpm_batch, 64)
         args.latent_decoder_steps, args.latent_decoder_batch = 30, 4
 
     args.ckpt_dir = os.path.abspath(args.ckpt_dir)
