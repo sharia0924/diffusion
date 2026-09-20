@@ -28,7 +28,7 @@
 阶段（LDM，--ldm；产物带 _l32 后缀以免覆盖像素空间结果）:
   vae             训练 VAE（隐空间）        -> checkpoints/vae32.pt
   latent_ddpm     隐空间扩散模型            -> checkpoints/ddpm_latent32.pt
-  latent_decoder  隐空间复原解码器(加性注入) -> checkpoints/decoder_latent32_best.pt
+  latent_decoder  隐空间复原解码器(加性注入) -> checkpoints/<--latent-decoder-name>_best.pt
   ldm_eval        端到端验收                -> results/ldm_pipeline32.md
   strength_sweep  工作点扫描（质量vs准确率） -> results/strip32.md
   latent_robust   鲁棒性全表                -> results/robustness_l32.md
@@ -326,6 +326,18 @@ def main():
     ap.add_argument("--latent-strength-max", type=float, default=0.4,
                     help="隐空间解码器训练的 strength 上界")
     ap.add_argument("--sweep-strengths", default="0.005,0.02,0.05,0.1,0.3,1.0")
+    # ---- 隐空间解码器的工作点（三个机制都已单独验证有效，默认组合即当前最优）----
+    # 注意：这几项必须"训练与评测同口径"。此前 latent_decoder 阶段不传它们，
+    # 结果用默认参数（inject_at=1.0, n_inject=1, r_max=None）训出一个新解码器，
+    # 却与已验证的注入点在评测端对不上（见 tests/strength_semantics_test.py 注释）。
+    ap.add_argument("--latent-decoder-name", default="decoder_latent32_combo",
+                    help="隐空间解码器 checkpoint 基名（不含 .pt）；评测阶段读的也是它")
+    ap.add_argument("--inject-at", type=float, default=0.35,
+                    help="注入时刻（占反演轨迹的比例）；实测 0.35 优于末端 1.0")
+    ap.add_argument("--n-inject", type=int, default=8,
+                    help="多步注入次数；零额外计算，同准确率下 PSNR 更高")
+    ap.add_argument("--r-max", type=int, default=13,
+                    help="环带外径上限（把载波搬到低频以抗 JPEG）；0 = 关闭")
 
     # 各评测专属网格
     ap.add_argument("--grid-hide-list", default="10,25,50,100")
@@ -521,10 +533,15 @@ def main():
     if args.ldm:
         vae_ckpt = os.path.join(args.ckpt_dir, "vae32.pt")
         lat_ddpm = os.path.join(args.ckpt_dir, "ddpm_latent32.pt")
-        lat_dec = os.path.join(args.ckpt_dir, "decoder_latent32.pt")
+        lat_dec = os.path.join(args.ckpt_dir, args.latent_decoder_name + ".pt")
         lat_dec_best = lat_dec.replace(".pt", "_best.pt")
         lat_common = ["--ddpm-ckpt", lat_ddpm, "--data-root", args.data_root,
                       "--pixel-res", str(args.vae_resize)]
+        # 训练/评测两侧共用同一份工作点参数，杜绝口径漂移
+        lat_workpoint = ["--inject-at", str(args.inject_at),
+                         "--n-inject", str(args.n_inject)]
+        if args.r_max and args.r_max > 0:
+            lat_workpoint += ["--r-max", str(args.r_max)]
 
         def lat_decoder_ckpt() -> str:
             return lat_dec_best if os.path.exists(lat_dec_best) else lat_dec
@@ -579,6 +596,9 @@ def main():
                       else lat_ddpm)
 
         if "latent_decoder" in stages:
+            print(f"[latent_decoder] 工作点: inject_at={args.inject_at} "
+                  f"n_inject={args.n_inject} r_max={args.r_max} "
+                  f"-> {os.path.basename(lat_dec)}")
             run_stage("latent_decoder", "train_decoder.py",
                       ["--ddpm-ckpt", lat_ddpm, "--out", lat_dec,
                        "--data-root", args.data_root,
@@ -591,7 +611,7 @@ def main():
                        "--geom-prob", str(args.geom_prob),
                        "--hide-steps", str(args.hide_steps),
                        "--rec-steps", str(args.rec_steps),
-                       "--eval-every", "250"]
+                       "--eval-every", "250"] + lat_workpoint
                       + (["--tiny"] if args.tiny else []),
                       done_marker=lat_dec)
 
@@ -686,7 +706,9 @@ def main():
                     f"batch={args.latent_ddpm_batch}\n"
                     f"- 隐空间解码器: steps={args.latent_decoder_steps}, "
                     f"inject_mode=**{args.inject_mode}**, "
-                    f"strength∈[{args.latent_strength_min},{args.latent_strength_max}]\n")
+                    f"strength∈[{args.latent_strength_min},{args.latent_strength_max}], "
+                    f"inject_at={args.inject_at}, n_inject={args.n_inject}, "
+                    f"r_max={args.r_max}\n")
         else:
             f.write(f"- DDPM 目标 epoch: {args.ddpm_epochs}（当前 checkpoint 已完成 "
                     f"{_ddpm_epochs_done(ddpm_ckpt)}）\n")
