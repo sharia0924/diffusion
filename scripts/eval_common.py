@@ -109,14 +109,17 @@ class StegoIO:
              inject_at=None, n_inject=None):
         """inject_at / n_inject 为 None 时使用实例值（由解码器 config 决定）。
 
-        注意 strength 语义：`n_inject>1` 时这里是**每次注入**的强度；
-        若要与 n=1 保持总注入能量一致，调用方需传 strength/n
-        （`train_decoder --n-inject` 已按此处理）。
+        strength 语义：这里是**总注入能量**（与 n_inject 无关）。
+        当 n_inject>1 时自动按 strength/n_inject 分摊到每次注入，
+        与 `train_decoder --n-inject` 的处理保持一致（总能量守恒）。
+        这一点很关键：若原样传 strength，n 次注入的**总能量会放大 n 倍**，
+        实测 n=8、strength=0.3 时载密图 PSNR 会从 ~30 dB 崩到 6 dB。
         """
         ia = self.inject_at if inject_at is None else inject_at
-        ni = self.n_inject if n_inject is None else n_inject
+        ni = max(1, int(self.n_inject if n_inject is None else n_inject))
+        st = strength / ni if torch.is_tensor(strength) else float(strength) / ni
         return self.stego.hide(self.to_space(covers_pix), bits, keys, hide_steps,
-                               strength=strength, nonces=nonces, inject_at=ia,
+                               strength=st, nonces=nonces, inject_at=ia,
                                n_inject=ni)
 
     def recover(self, z_or_pix, keys, rec_steps, decoder, nonces=None):

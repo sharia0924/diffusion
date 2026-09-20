@@ -316,7 +316,8 @@ def main():
               "n_pairs": stego.n_pairs, "hide_steps": args.hide_steps,
               "rec_steps": args.rec_steps, "nonce_protocol": "keyed-v2",
               "geom_prob": args.geom_prob, "inject_mode": args.inject_mode,
-              "inject_at": args.inject_at, "r_max": args.r_max}
+              "inject_at": args.inject_at, "n_inject": args.n_inject,
+              "r_max": args.r_max}
     for step in range(1, args.steps + 1):
         try:
             x0, _ = next(it)
