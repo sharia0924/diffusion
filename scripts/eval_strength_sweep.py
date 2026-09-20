@@ -27,8 +27,8 @@ from krd.metrics import bit_accuracy, psnr, ssim
 from krd.perceptual import lpips
 from krd.pattern import ecc_collapse
 from krd.utils import derive_nonces_from_keys, seed_everything, token_key
-from scripts.eval_common import StegoIO, cifar_loader, gather_covers
-from scripts.train_decoder import load_stego
+from scripts.eval_common import cifar_loader, gather_covers
+from scripts.eval_setup import eval_setup
 
 
 def main():
@@ -68,27 +68,23 @@ def main():
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     _m = torch.load(args.ddpm_ckpt, map_location="cpu", weights_only=False).get("args", {})
-    pixel_res = args.pixel_res or _m.get("resize") or 32
 
-    dec, cfg = None, None
-    if os.path.exists(args.decoder_ckpt):
-        ck = torch.load(args.decoder_ckpt, map_location=dev, weights_only=True)
-        cfg = ck["config"]
-    _c = cfg or {}
-    stego = load_stego(args.ddpm_ckpt, dev, with_vae=not args.pixel_baseline,
-                       n_bits=_c.get("n_bits", 16), ecc_reps=_c.get("ecc", 3),
-                       bins_per_bit=_c.get("bpb", 2),
-                       n_check_bits=_c.get("n_check_bits", 32),
-                       inject_mode=args.inject_mode or _c.get("inject_mode", "replace"),
-                       r_max=_c.get("r_max"))
-    io = StegoIO(stego, pixel_res=pixel_res)
-    print(f"[space] {io.describe()} pixel_res={pixel_res}", flush=True)
-    print(f"[capacity] {io.capacity_report(stego.total_embed_bits)}", flush=True)
+    # 统一走 eval_setup：容量参数 + inject_at/n_inject 全部从解码器 config 回填。
+    # 教训（§11.1）：此前这里是手搓 `StegoIO(stego, pixel_res=...)`，
+    # inject_at 与 n_inject 直接掉回默认值（1.0 / 1），于是"按 0.35/8 训练的
+    # 解码器"在一个完全不同的注入口径下被评测，扫描表看不出任何差别。
+    stego, io, _loader, cfg, pixel_res = eval_setup(
+        args.ddpm_ckpt, args.data_root, args.batch, dev, args.decoder_ckpt)
+    pixel_res = args.pixel_res or pixel_res
+    dec = None
     if cfg:
+        ck = torch.load(args.decoder_ckpt, map_location=dev, weights_only=True)
         dec = RingDecoder(2 * cfg["n_pairs"],
                           cfg["n_bits"] * cfg["ecc"] + cfg["n_check_bits"]).to(dev)
         dec.load_state_dict(ck["decoder"])
         dec.eval()
+    print(f"[space] {io.describe()} pixel_res={pixel_res}", flush=True)
+    print(f"[capacity] {io.capacity_report(stego.total_embed_bits)}", flush=True)
 
     loader = cifar_loader(args.data_root, train=False, batch_size=args.batch,
                           resize=None if pixel_res == 32 else pixel_res)
@@ -154,7 +150,9 @@ def main():
         f.write(f"- 空间: {io.describe()}，pixel_res={pixel_res}\n")
         f.write(f"- 无嵌入往返上限: PSNR **{base:.2f} dB**\n")
         f.write(f"- 容量: {io.capacity_report(stego.total_embed_bits)}\n")
-        f.write(f"- 样本 n={args.n}, S_hide={args.hide_steps}, S_rec={args.rec_steps}\n\n")
+        f.write(f"- 样本 n={args.n}, S_hide={args.hide_steps}, S_rec={args.rec_steps}\n")
+        f.write(f"- 注入口径: inject_at={io.inject_at}, n_inject={io.n_inject}, "
+                f"inject_mode={stego.inject_mode}, r_max={getattr(stego, 'r_max', None)}\n\n")
         f.write("| strength | PSNR | SSIM | LPIPS | mf | dec clean | dec jpeg50 |\n")
         f.write("|---|---|---|---|---|---|---|\n")
         for r in rows:

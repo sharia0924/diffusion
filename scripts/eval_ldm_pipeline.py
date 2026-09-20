@@ -29,9 +29,8 @@ from krd.distortions import apply_attack
 from krd.metrics import bit_accuracy, psnr, ssim
 from krd.perceptual import lpips
 from krd.utils import derive_nonces_from_keys, seed_everything, token_key
-from krd.vae import build_vae
-from scripts.eval_common import StegoIO, cifar_loader, gather_covers
-from scripts.train_decoder import load_stego, stego_to_images
+from scripts.eval_common import cifar_loader, gather_covers
+from scripts.eval_setup import eval_setup
 
 
 def main():
@@ -77,24 +76,25 @@ def main():
     _margs = _ck.get("args", {})
     pixel_res = args.pixel_res or _margs.get("resize") or 32
 
-    # 先读解码器配置，再用同一套容量参数构造 stego（否则 bins_per_bit / 槽位数不匹配）
-    dec, cfg = None, None
-    if os.path.exists(args.decoder_ckpt):
-        ck = torch.load(args.decoder_ckpt, map_location=device, weights_only=True)
-        cfg = ck["config"]
+    # 统一走 eval_setup：容量参数 + inject_at/n_inject 全部从解码器 config 回填。
+    # （此前这里是手搓 StegoIO，漏掉了 inject_at/n_inject，于是评测在
+    #   inject_at=1.0 / n_inject=1 下进行，而解码器是按 0.35 / 8 训练的。）
+    stego, io, _loader, cfg, _pres = eval_setup(
+        args.ddpm_ckpt, args.data_root, args.batch, device, args.decoder_ckpt)
+    pixel_res = args.pixel_res or _pres
+    dec = None
+    if cfg:
         print(f"[decoder] 载入 {args.decoder_ckpt}: n_bits={cfg['n_bits']} ecc={cfg['ecc']} "
-              f"bpb={cfg['bpb']} check={cfg['n_check_bits']} res={cfg['res']}", flush=True)
+              f"bpb={cfg['bpb']} check={cfg['n_check_bits']} res={cfg['res']} "
+              f"inject_at={cfg.get('inject_at')} n_inject={cfg.get('n_inject')} "
+              f"r_max={cfg.get('r_max')}", flush=True)
+        ck = torch.load(args.decoder_ckpt, map_location=device, weights_only=True)
+        dec = RingDecoder(2 * cfg["n_pairs"],
+                          cfg["n_bits"] * cfg["ecc"] + cfg["n_check_bits"]).to(device)
+        dec.load_state_dict(ck["decoder"])
+        dec.eval()
     else:
         print(f"[decoder] 未找到 {args.decoder_ckpt}，只测 matched-filter 接收", flush=True)
-
-    _cfg = cfg or {}
-    stego = load_stego(args.ddpm_ckpt, device, with_vae=not args.pixel_baseline,
-                       n_bits=_cfg.get("n_bits", 16), ecc_reps=_cfg.get("ecc", 3),
-                       bins_per_bit=_cfg.get("bpb", 2),
-                       n_check_bits=_cfg.get("n_check_bits", 32),
-                       inject_mode=_cfg.get("inject_mode", "replace"),
-                       r_max=_cfg.get("r_max"))
-    io = StegoIO(stego, pixel_res=pixel_res)
     print(f"[space] {io.describe()}  pixel_res={pixel_res}", flush=True)
 
     if cfg is not None:
