@@ -60,7 +60,8 @@ def auto_bins_per_bit(res: int, n_slots: int, requested: int = 2,
 
 
 def fit_capacity(res: int, n_bits: int, ecc: int, n_check: int,
-                 requested_bpb: int = 2, r_max: int | None = None) -> tuple[int, int, int, int]:
+                 requested_bpb: int = 2, r_max: int | None = None,
+                 maximize_bpb: bool = True) -> tuple[int, int, int, int]:
     """把 (n_bits, ecc, n_check, bpb) 调整到该分辨率的频点预算之内。
 
     优先保持 n_bits 与 ecc，先降 bpb；仍放不下则缩减 n_check，最后才降 n_bits。
@@ -68,21 +69,32 @@ def fit_capacity(res: int, n_bits: int, ecc: int, n_check: int,
     （隐空间 16×16 的预算只有 70 对，而默认配置需要 160 对，
       不做自适应会让评测脚本在没有解码器时直接崩掉。）
     r_max 限制环带外半径（JPEG 鲁棒频段实验）：预算随 r_max 收窄。
+
+    maximize_bpb=True（默认）：**在预算内把 bpb 顶到最大**。
+    动机：每比特的观测数 = bpb × g，观测越多判决越稳；此前只做了"向下截断"，
+    导致 r_max=13 时 8bit 配置仍用 bpb=2（112 对 / 预算 252 对），
+    白白浪费 2 倍观测（实测 bpb 2->4 可把 mf 从 0.766 提到 0.922）。
     """
     from krd.pattern import ring_capacity
     avail = ring_capacity(res, r_max=r_max)
-    bpb, check = requested_bpb, n_check
-    bpb = min(bpb, max(1, avail // max(1, n_bits * ecc + check)))
-    while n_bits * ecc + check > avail // max(bpb, 1) and check > 0:
+    b, check = int(requested_bpb), n_check
+    slots = n_bits * ecc + check
+    if maximize_bpb and slots > 0:
+        b = max(b, max(1, avail // slots))
+    # 向下适配：先降 bpb，再缩校验位，最后降载荷
+    b = min(b, max(1, avail // max(1, slots)))
+    while slots > avail // max(b, 1) and check > 0:
         check -= 1
-    while n_bits > 1 and n_bits * ecc + check > avail // max(bpb, 1):
+        slots = n_bits * ecc + check
+    while n_bits > 1 and n_bits * ecc + check > avail // max(b, 1):
         n_bits -= 1
     slots = n_bits * ecc + check
-    if (n_bits, check, bpb) != (n_bits, n_check, requested_bpb):
-        print(f"  [capacity] res={res} 可用 {avail} 对 -> "
-              f"自适应为 n_bits={n_bits} ecc={ecc} check={check} bpb={bpb} "
-              f"(slots={slots}, pairs={slots * bpb})")
-    return n_bits, ecc, check, bpb
+    if (n_bits, check, b) != (n_bits, n_check, requested_bpb):
+        print(f"  [capacity] res={res} r_max={r_max} 可用 {avail} 对 -> "
+              f"n_bits={n_bits} ecc={ecc} check={check} bpb={b} "
+              f"(slots={slots}, pairs={slots * b})"
+              f"{'  [已顶满预算]' if maximize_bpb and slots * b > avail * 0.8 else ''}")
+    return n_bits, ecc, check, b
 
 
 def load_stego(ckpt_path: str, device: str, n_bits: int = 16, ecc_reps: int = 3,
