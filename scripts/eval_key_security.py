@@ -83,8 +83,7 @@ def main():
     cfg = dec_ckpt["config"] if dec_ckpt else {}
     decoder = None
     if dec_ckpt:
-        decoder = RingDecoder(2 * cfg["n_pairs"],
-                              cfg["n_bits"] * cfg["ecc"] + cfg.get("n_check_bits", 0)).to(device)
+        decoder = RingDecoder.from_config(cfg).to(device)
         decoder.load_state_dict(dec_ckpt["decoder"])
         decoder.eval()
         print(f"loaded decoder from {args.decoder_ckpt}")

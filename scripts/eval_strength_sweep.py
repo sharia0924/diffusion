@@ -78,8 +78,7 @@ def main():
     dec = None
     if cfg:
         ck = torch.load(args.decoder_ckpt, map_location=dev, weights_only=True)
-        dec = RingDecoder(2 * cfg["n_pairs"],
-                          cfg["n_bits"] * cfg["ecc"] + cfg["n_check_bits"]).to(dev)
+        dec = RingDecoder.from_config(cfg).to(dev)
         dec.load_state_dict(ck["decoder"])
         dec.eval()
     print(f"[space] {io.describe()} pixel_res={pixel_res}", flush=True)

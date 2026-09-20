@@ -2,6 +2,11 @@
 
 背景：train_decoder 的 config 曾漏写 n_inject，导致评测端回填成 1，
 与训练时（8 次注入）不一致。此处直接补写，避免重训。
+
+⚠️ 只补**元数据**，不改权重；补写后请立刻用 scripts/check_ninject.py 核对
+"配置回填后的注入口径"与训练命令行一致（inject_at / n_inject / r_max / S）。
+注意：正在训练的进程会在下一次 eval 时用旧格式覆盖回来，
+所以补写必须在**训练进程结束之后**执行。
 """
 
 import os
@@ -12,8 +17,10 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 PATCHES = {
-    "decoder_latent32_combo.pt": {"n_inject": 8},
-    "decoder_latent32_combo_best.pt": {"n_inject": 8},
+    "decoder_latent32_combo.pt": {"n_inject": 8, "eval_strength": 1.0,
+                                  "strength_min": 0.15, "strength_max": 0.4},
+    "decoder_latent32_combo_best.pt": {"n_inject": 8, "eval_strength": 1.0,
+                                       "strength_min": 0.15, "strength_max": 0.4},
 }
 
 

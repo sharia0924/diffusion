@@ -96,8 +96,7 @@ def main():
             print(f"（从 PNG 元数据读取 counter={counter}）")
         if cfg is None:
             raise SystemExit(f"recover 需要解码器 checkpoint：{args.decoder_ckpt} 不存在")
-        dec = RingDecoder(2 * cfg["n_pairs"],
-                          cfg["n_bits"] * cfg["ecc"] + cfg["n_check_bits"]).to(device)
+        dec = RingDecoder.from_config(cfg).to(device)
         dec.load_state_dict(torch.load(args.decoder_ckpt, map_location=device,
                                        weights_only=True)["decoder"])
         dec.eval()

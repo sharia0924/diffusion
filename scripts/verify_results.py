@@ -107,8 +107,7 @@ def main():
     dec = stego.load_decoder(args.decoder_ckpt) if hasattr(stego, "load_decoder") else None
     if dec is None:
         from krd import RingDecoder
-        dec = RingDecoder(2 * cfg["n_pairs"],
-                          cfg["n_bits"] * cfg["ecc"] + cfg["n_check_bits"]).to(device)
+        dec = RingDecoder.from_config(cfg).to(device)
         dec.load_state_dict(torch.load(args.decoder_ckpt, map_location=device,
                                        weights_only=True)["decoder"])
         dec.eval()

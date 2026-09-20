@@ -71,8 +71,7 @@ def main():
     stego, io, loader, cfg, pixel_res = eval_setup(
         args.ddpm_ckpt, args.data_root, args.batch, device, args.decoder_ckpt)
     print(f"[space] {io.describe()}  pixel_res={pixel_res}")
-    dec = RingDecoder(2 * cfg["n_pairs"],
-                      cfg["n_bits"] * cfg["ecc"] + cfg["n_check_bits"]).to(device)
+    dec = RingDecoder.from_config(cfg).to(device)
     dec.load_state_dict(dec_ckpt["decoder"])
     dec.eval()
 

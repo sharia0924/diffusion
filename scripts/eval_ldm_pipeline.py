@@ -89,8 +89,7 @@ def main():
               f"inject_at={cfg.get('inject_at')} n_inject={cfg.get('n_inject')} "
               f"r_max={cfg.get('r_max')}", flush=True)
         ck = torch.load(args.decoder_ckpt, map_location=device, weights_only=True)
-        dec = RingDecoder(2 * cfg["n_pairs"],
-                          cfg["n_bits"] * cfg["ecc"] + cfg["n_check_bits"]).to(device)
+        dec = RingDecoder.from_config(cfg).to(device)
         dec.load_state_dict(ck["decoder"])
         dec.eval()
     else:
@@ -98,8 +97,7 @@ def main():
     print(f"[space] {io.describe()}  pixel_res={pixel_res}", flush=True)
 
     if cfg is not None:
-        dec = RingDecoder(2 * cfg["n_pairs"],
-                          cfg["n_bits"] * cfg["ecc"] + cfg["n_check_bits"]).to(device)
+        dec = RingDecoder.from_config(cfg).to(device)
         dec.load_state_dict(ck["decoder"])
         dec.eval()
 

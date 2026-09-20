@@ -75,8 +75,7 @@ def main():
         raise SystemExit(f"[decoder] 需要解码器 checkpoint：{args.decoder_ckpt} 不存在"
                          f"（先用 train_decoder.py 训练）")
     dec_ckpt = torch.load(args.decoder_ckpt, map_location=device, weights_only=True)
-    dec = RingDecoder(2 * cfg["n_pairs"],
-                      cfg["n_bits"] * cfg["ecc"] + cfg["n_check_bits"]).to(device)
+    dec = RingDecoder.from_config(cfg).to(device)
     dec.load_state_dict(dec_ckpt["decoder"])
     dec.eval()
     print(f"[space] {io.describe()}")

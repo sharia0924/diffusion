@@ -203,6 +203,9 @@ def main():
                          "降低 r_max 把图案移出 JPEG 量化严重的中高频段，"
                          "代价是频点预算收缩（bpb 自动下调）。需与评测端 config 回填一致")
     ap.add_argument("--eval-size", type=int, default=128)
+    ap.add_argument("--mf-residual", action="store_true",
+                    help="解码头加一条 matched-filter 直线路径并零初始化最后一层："
+                         "训练从 mf 的性能出发（实测 mf 优于当前 MLP 解码器，§13.2）")
     ap.add_argument("--eval-strength", type=float, default=0.3,
                     help="训练中 eval 用的**总注入能量**，也决定 _best.pt 的挑选口径。"
                          "此前硬编码 1.0（不在训练区间 [strength-min, strength-max] 内），"
@@ -231,7 +234,14 @@ def main():
               f"容量={stego.n_bits}bit ecc={stego.ecc} bpb={stego.bpb} "
               f"slots={stego.total_embed_bits} n_pairs={stego.n_pairs}"
               f"（失真在像素空间施加，再编码回隐空间）", flush=True)
-    decoder = RingDecoder(2 * stego.n_pairs, stego.total_embed_bits).to(device)
+    # 统一构造入口：架构（含 mf_residual 残差路径）由 config 决定，
+    # 避免"评测端按旧架构装新权重"这类静默错误（见 krd/decoders.py 注释）
+    _d_cfg = {"n_pairs": stego.n_pairs, "n_bits": stego.n_bits, "ecc": stego.ecc,
+              "n_check_bits": stego.n_check_bits, "mf_residual": args.mf_residual}
+    decoder = RingDecoder.from_config(_d_cfg).to(device)
+    if args.mf_residual:
+        print("[decoder] mf_residual=True：初始即等于 matched-filter 判决，"
+              "训练只学残差（最坏情况退化为 mf，而不是更差的模型）", flush=True)
     opt = torch.optim.AdamW(decoder.parameters(), lr=args.lr, weight_decay=1e-4)
 
     # **像素尺寸必须与 VAE 训练时一致**：否则 VAE 编码出的 latent 分辨率会偏小
@@ -323,7 +333,8 @@ def main():
               "geom_prob": args.geom_prob, "inject_mode": args.inject_mode,
               "inject_at": args.inject_at, "n_inject": args.n_inject,
               "r_max": args.r_max, "eval_strength": args.eval_strength,
-              "strength_min": args.strength_min, "strength_max": args.strength_max}
+              "strength_min": args.strength_min, "strength_max": args.strength_max,
+              "mf_residual": bool(args.mf_residual)}
     for step in range(1, args.steps + 1):
         try:
             x0, _ = next(it)

@@ -30,7 +30,7 @@ def main():
                    if f.startswith("eval_") and f.endswith(".py") and f not in EXEMPT)
     assert files, "没找到任何 eval_*.py，路径不对？"
 
-    bad_ctor, bad_direct, no_setup = [], [], []
+    bad_ctor, bad_direct, no_setup, bad_dec = [], [], [], []
     for f in files:
         src = open(os.path.join(SCRIPTS, f), encoding="utf-8").read()
         code = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("#"))
@@ -41,6 +41,10 @@ def main():
             bad_direct.append(f)
         if "eval_setup(" not in code:
             no_setup.append(f)
+        # 解码头也必须从 config 构造（mf_residual 这类架构开关写在 config 里；
+        # 手搓构造会把带残差路径的权重装进没有残差路径的网络，且 state_dict 恰好兼容）
+        if re.search(r"\bRingDecoder\s*\(", code):
+            bad_dec.append(f)
 
     print(f"检查 {len(files)} 个评测脚本：{', '.join(files)}")
     for name, lst, why in (("直接构造 StegoIO", bad_ctor,
@@ -48,7 +52,9 @@ def main():
                            ("绕过 io.hide 调用 stego.hide", bad_direct,
                             "必须走 io.hide(...)，否则 strength 不按 n_inject 均摊"),
                            ("未调用 eval_setup", no_setup,
-                            "评测脚本必须通过 eval_setup 取得 (stego, io, loader, cfg, res)")):
+                            "评测脚本必须通过 eval_setup 取得 (stego, io, loader, cfg, res)"),
+                           ("直接构造 RingDecoder", bad_dec,
+                            "必须用 RingDecoder.from_config(cfg)，否则架构开关（mf_residual）会丢")):
         if lst:
             print(f"[FAIL] {name}: {', '.join(lst)}\n       {why}")
         else:
@@ -57,6 +63,7 @@ def main():
     assert not bad_ctor, f"有评测脚本绕过 eval_setup 构造 StegoIO: {bad_ctor}"
     assert not bad_direct, f"有评测脚本直接调用 stego.hide: {bad_direct}"
     assert not no_setup, f"有评测脚本没调用 eval_setup: {no_setup}"
+    assert not bad_dec, f"有评测脚本绕过 from_config 构造 RingDecoder: {bad_dec}"
     print("评测工作点护栏测试通过 [OK]")
 
 
