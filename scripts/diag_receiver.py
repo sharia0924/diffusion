@@ -51,7 +51,14 @@ def slot_values(feats, n_pairs, total_bits, scheme: str):
     im = im.view(total_bits, g)
     if scheme == "mean":                      # 现行做法
         return re.mean(-1)
-    if scheme == "w_mag":                     # 按信号幅度加权
+    if scheme == "hard":                      # 逐对硬判决再平均（最弱基线）
+        return torch.sign(re).mean(-1)
+    if scheme == "w_norm":                    # 逐对按自身幅度归一化后等权平均
+        v = torch.cat([re, im], dim=-1)
+        return (re / (v.abs() + EPS)).mean(-1)
+    if scheme == "w_invmag":                  # 按幅度倒数加权（补偿"相对误差"信道）
+        w = 1.0 / (re.abs() + EPS)
+    elif scheme == "w_mag":                   # 按信号幅度加权
         w = re.abs() + EPS
     elif scheme == "w_invvar":                # 按正交（噪声）功率倒数加权
         w = 1.0 / (im.pow(2) + EPS)
@@ -109,7 +116,8 @@ def main():
           f"N={s.bpb * s.ecc} S={args.steps} n_inject={args.n_inject} "
           f"inject_at={args.inject_at} n={args.n} r_max={args.r_max}", flush=True)
 
-    schemes = ["mean", "w_mag", "w_invvar", "w_mrc", "w_mrc_abs"]
+    schemes = ["mean", "hard", "w_norm", "w_invmag", "w_mag", "w_invvar",
+               "w_mrc", "w_mrc_abs"]
     rows = []
     for E in [float(v) for v in args.energies.split(",")]:
         st = E / max(1, args.n_inject)

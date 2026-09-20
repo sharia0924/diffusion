@@ -67,7 +67,6 @@ def main():
     seed_everything(args.seed)
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
-    _m = torch.load(args.ddpm_ckpt, map_location="cpu", weights_only=False).get("args", {})
 
     # 统一走 eval_setup：容量参数 + inject_at/n_inject 全部从解码器 config 回填。
     # 教训（§11.1）：此前这里是手搓 `StegoIO(stego, pixel_res=...)`，

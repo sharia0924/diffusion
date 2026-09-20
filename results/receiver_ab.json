@@ -1,0 +1,122 @@
+[
+  {
+    "E": 0.2,
+    "psnr": 31.90790009919911,
+    "scheme": "mean",
+    "mf_clean": 0.9375,
+    "mf_jpeg50": 0.78125,
+    "mf_clean_ecc_soft": 0.9375
+  },
+  {
+    "E": 0.2,
+    "psnr": 31.90790009919911,
+    "scheme": "w_mag",
+    "mf_clean": 0.90625,
+    "mf_jpeg50": 0.734375,
+    "mf_clean_ecc_soft": 0.953125
+  },
+  {
+    "E": 0.2,
+    "psnr": 31.90790009919911,
+    "scheme": "w_invvar",
+    "mf_clean": 0.8125,
+    "mf_jpeg50": 0.65625,
+    "mf_clean_ecc_soft": 0.859375
+  },
+  {
+    "E": 0.2,
+    "psnr": 31.90790009919911,
+    "scheme": "w_mrc",
+    "mf_clean": 0.828125,
+    "mf_jpeg50": 0.640625,
+    "mf_clean_ecc_soft": 0.859375
+  },
+  {
+    "E": 0.2,
+    "psnr": 31.90790009919911,
+    "scheme": "w_mrc_abs",
+    "mf_clean": 0.90625,
+    "mf_jpeg50": 0.671875,
+    "mf_clean_ecc_soft": 0.859375
+  },
+  {
+    "E": 0.3,
+    "psnr": 30.344225935428394,
+    "scheme": "mean",
+    "mf_clean": 1.0,
+    "mf_jpeg50": 0.84375,
+    "mf_clean_ecc_soft": 1.0
+  },
+  {
+    "E": 0.3,
+    "psnr": 30.344225935428394,
+    "scheme": "w_mag",
+    "mf_clean": 0.984375,
+    "mf_jpeg50": 0.796875,
+    "mf_clean_ecc_soft": 0.984375
+  },
+  {
+    "E": 0.3,
+    "psnr": 30.344225935428394,
+    "scheme": "w_invvar",
+    "mf_clean": 0.953125,
+    "mf_jpeg50": 0.71875,
+    "mf_clean_ecc_soft": 0.96875
+  },
+  {
+    "E": 0.3,
+    "psnr": 30.344225935428394,
+    "scheme": "w_mrc",
+    "mf_clean": 0.96875,
+    "mf_jpeg50": 0.734375,
+    "mf_clean_ecc_soft": 0.984375
+  },
+  {
+    "E": 0.3,
+    "psnr": 30.344225935428394,
+    "scheme": "w_mrc_abs",
+    "mf_clean": 0.984375,
+    "mf_jpeg50": 0.734375,
+    "mf_clean_ecc_soft": 0.984375
+  },
+  {
+    "E": 0.4,
+    "psnr": 26.098768300890217,
+    "scheme": "mean",
+    "mf_clean": 1.0,
+    "mf_jpeg50": 0.9375,
+    "mf_clean_ecc_soft": 1.0
+  },
+  {
+    "E": 0.4,
+    "psnr": 26.098768300890217,
+    "scheme": "w_mag",
+    "mf_clean": 0.984375,
+    "mf_jpeg50": 0.859375,
+    "mf_clean_ecc_soft": 1.0
+  },
+  {
+    "E": 0.4,
+    "psnr": 26.098768300890217,
+    "scheme": "w_invvar",
+    "mf_clean": 0.96875,
+    "mf_jpeg50": 0.734375,
+    "mf_clean_ecc_soft": 0.96875
+  },
+  {
+    "E": 0.4,
+    "psnr": 26.098768300890217,
+    "scheme": "w_mrc",
+    "mf_clean": 0.96875,
+    "mf_jpeg50": 0.796875,
+    "mf_clean_ecc_soft": 0.96875
+  },
+  {
+    "E": 0.4,
+    "psnr": 26.098768300890217,
+    "scheme": "w_mrc_abs",
+    "mf_clean": 0.984375,
+    "mf_jpeg50": 0.84375,
+    "mf_clean_ecc_soft": 0.984375
+  }
+]
