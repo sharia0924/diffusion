@@ -99,10 +99,12 @@ def main():
     base = io.baseline_psnr(covers)
     print(f"[latent] 无嵌入往返上限 PSNR {base:.2f} dB", flush=True)
 
-    def mf_acc(z):
+    def mf_acc(z, atk=None):
+        """matched-filter 接收（免训练）。atk 不为 None 时先在像素域施加攻击。"""
+        if atk is not None:
+            z = io.attack(z, lambda t: apply_attack(t, atk[0], atk[1]))
         accs = []
         for i in range(z.shape[0]):
-            p = stego.params_for(keys[i], nonces[i])
             feats = io.recover_features(z[i:i + 1], [keys[i]], args.rec_steps,
                                         nonces=[nonces[i]])[0]
             gg = stego.n_pairs // stego.total_embed_bits
@@ -136,13 +138,15 @@ def main():
         row = {"strength": st, "psnr": psnr(px, covers),
                "psnr_img": psnr_mean(px, covers), "ssim": ssim(px, covers),
                "lpips": lpips(px, covers), "mf": mf_acc(sg),
+               "mf_jpeg50": mf_acc(sg, ("jpeg", 50)),
                "dec_clean": dec_acc(sg), "dec_jpeg50": dec_acc(sg, ("jpeg", 50))}
         rows.append(row)
         lp = row["lpips"]
         print(f"strength={st:<7}: PSNR {row['psnr']:6.2f} dB "
               f"(逐图平均 {row['psnr_img']:6.2f}) SSIM {row['ssim']:.4f} "
               f"LPIPS {'n/a' if lp is None else f'{lp:.4f}'} | mf {row['mf']:.3f} "
-              f"dec {row['dec_clean']:.3f} jpeg50 {row['dec_jpeg50']:.3f}", flush=True)
+              f"mf@jpeg50 {row['mf_jpeg50']:.3f} | dec {row['dec_clean']:.3f} "
+              f"jpeg50 {row['dec_jpeg50']:.3f}", flush=True)
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as f:
@@ -155,14 +159,15 @@ def main():
                 f"inject_mode={stego.inject_mode}, r_max={getattr(stego, 'r_max', None)}\n")
         f.write("- PSNR 口径: `PSNR` = 批内全局 MSE（历史口径，随 n 漂移）；"
                 "`PSNR_img` = 逐图 PSNR 再平均（文献通行口径，通常更高）\n\n")
-        f.write("| strength | PSNR | PSNR_img | SSIM | LPIPS | mf | dec clean | "
-                "dec jpeg50 |\n")
-        f.write("|---|---|---|---|---|---|---|---|\n")
+        f.write("| strength | PSNR | PSNR_img | SSIM | LPIPS | mf | mf@jpeg50 | "
+                "dec clean | dec jpeg50 |\n")
+        f.write("|---|---|---|---|---|---|---|---|---|\n")
         for r in rows:
             lp = r["lpips"]
             f.write(f"| {r['strength']} | {r['psnr']:.2f} | {r['psnr_img']:.2f} | "
                     f"{r['ssim']:.4f} | "
                     f"{'n/a' if lp is None else f'{lp:.4f}'} | {r['mf']:.3f} | "
+                    f"{r['mf_jpeg50']:.3f} | "
                     f"{r['dec_clean']:.3f} | {r['dec_jpeg50']:.3f} |\n")
     print(f"saved -> {args.out}")
 
