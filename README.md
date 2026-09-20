@@ -8,8 +8,8 @@
 - **鲁棒性**：解码器在可微 JPEG / 噪声 / 模糊 / 缩放 / **几何失真**下训练。
 
 完整方案（文献综述、可行性、赛道性价比、实验计划）见 [PROPOSAL.md](PROPOSAL.md)；
-当前问题的诊断与下一步路线见 [NEXT_STEPS.md](NEXT_STEPS.md)；
-**最近一次重训结果的分析见 [RESULTS_ANALYSIS_v2_retrain.md](RESULTS_ANALYSIS_v2_retrain.md)**。
+**主迭代日志（方案演进 / 当前结果 / 判定点 / 选刊分析）见 [ITERATION_LOG.md](ITERATION_LOG.md)**；
+v2 口径的诊断与修复过程见 [NEXT_STEPS.md](NEXT_STEPS.md)。
 
 ## v2 评测口径修复（务必先读）
 
@@ -25,6 +25,40 @@
 | 缺 LPIPS/FID 等不可见性指标 | 新增 `krd/perceptual.py`（LPIPS 可选依赖，缺失时优雅降级） |
 
 诊断证据与复现命令见 [NEXT_STEPS.md](NEXT_STEPS.md) §2 与 `scripts/diag_psnr_probe.py`。
+
+## 当前主战场：LDM 隐空间（2026-09 起）
+
+像素空间往返上限实测仅 18.8 dB（300 epoch 已饱和），已迁移到**自训 VAE + 隐空间 DDPM**：
+
+```bash
+# 一键隐空间流水线（VAE → 隐空间 DDPM → 解码器 → 全套评测）
+python scripts/run_pipeline.py --ldm --stages all --hide-steps 150 --rec-steps 150
+
+# 单独重训解码器（bpb/步数/inject_at 由 fit_capacity 与参数自动管理，评测自动回填配置）
+python scripts/train_decoder.py --ddpm-ckpt checkpoints/ddpm_latent32.pt \
+    --n-bits 8 --bins-per-bit 6 --inject-mode add --inject-at 0.35 \
+    --strength-min 0.1 --strength-max 0.3 --hide-steps 150 --rec-steps 150
+
+# 端到端工作点 / strength 扫描（eval_setup 自动匹配像素尺寸与容量参数）
+python scripts/eval_ldm_pipeline.py --ddpm-ckpt checkpoints/ddpm_latent32.pt \
+    --decoder-ckpt checkpoints/decoder_latent32_v2_best.pt --strengths 0.3,0.2,0.1
+python scripts/eval_strength_sweep.py --ddpm-ckpt checkpoints/ddpm_latent32.pt \
+    --decoder-ckpt checkpoints/decoder_latent32_v2_best.pt --hide-steps 150 --rec-steps 150
+
+# 独立复核（evaluation-only，重验日志声明的全部关键数字）
+python scripts/verify_results.py --n 8 --n-wrong 24
+```
+
+**结果快照（2026-09-19，详见 ITERATION_LOG.md §9）**：
+
+| 配置 | strength=0.3 | strength=0.1 |
+|---|---|---|
+| 16bit, bpb=4, inject_at=0.35 | 26.1 dB / dec 0.916 | 36.7 dB / dec 0.695 |
+
+- 复核状态：关键声明数字全部复现（端到端逐位一致）；正式评测建议 n≥64；
+- 当前卡点：质量-可解码互斥（论文线 PSNR≥35dB 且解码≥0.95 未达成）；
+- 进行中：8bit 载荷杠杆（每比特观测数 12→18）；matched-filter 是当前最强的免训练接收机
+  （s=0.3 处 0.984，优于训练解码器）。
 
 ## 环境
 
@@ -95,30 +129,36 @@ python scripts/diag_psnr_probe.py --n 6 --device cpu --out results/diag_psnr_pro
 ```
 krd/                 核心库
   schedule.py        DDPM 调度 + DDIM 采样/反演（"复原公式"）
-  unet.py            小型 U-Net（32²）
-  pattern.py         密钥(+nonce)→频点/相位/幅度；频谱注入；环带特征；ECC；校验比特
+  unet.py            U-Net（像素/隐空间共用）
+  vae.py             VAE（native f=2 / SDVAE / Wrapper）—— LDM 迁移核心
+  latent.py          隐空间容量报告
+  pattern.py         密钥(+nonce)→频点/相位/幅度；加性/覆盖式注入；去旋转环带特征；ECC；校验比特
   decoders.py        RingDecoder（MLP 解码头）
-  stego.py           TrajStego：hide / recover / 潜变量缓存 / 再生攻击
+  stego.py           TrajStego：hide(inject_at 任意时刻注入) / recover / 潜变量缓存 / 再生攻击
   security.py        密钥安全组件：错密钥分布 / matched-filter 校验 / 槽位定位 AUC
                      / 盲水印检测 AUC / 残差一致性 / 密钥空间与真实熵
   distortions.py     可微 JPEG + 经典失真 + **真实几何攻击** + 调度坐标加噪
   perceptual.py      LPIPS（可选依赖，缺失时优雅降级）
   metrics.py         PSNR / SSIM / 比特准确率
-scripts/             train_ddpm / train_decoder / run_stego / run_pipeline
-                     + eval_common（统一取数与 nonce 协议）
+scripts/             train_vae / train_ddpm / train_decoder（fit_capacity 容量自适应）
+                     + run_pipeline（--ldm 一键流水线）
+                     + eval_setup / eval_common（统一入口与盲 nonce 协议）
+                     + eval_ldm_pipeline / eval_strength_sweep
                      + eval_robustness / eval_key_security / eval_steps_grid
                      / eval_step_mismatch / eval_regen / plot_frontier
-                     + diag_psnr_probe（测量口径诊断探针）
-tests/smoke_test.py  冒烟测试（含几何攻击与 nonce 协议检查）
+                     + verify_results（独立复核）+ diag_*（机制诊断探针）
+tests/               smoke_test + inject_at_test 回归
 ```
 
 ## 说明与限制
 
-- 原型运行在像素空间 32×32，容量 16 比特（≈2 字节）；正式论文应迁移到
-  Stable Diffusion / LDM 隐空间（`krd/pattern.py`、`krd/stego.py` 与分辨率无关，可平移）。
-- 隐藏质量受 DDIM 往返重建误差限制（与基础模型质量成正比）；`--strength` 控制隐秘性-鲁棒性折中。
-  **实测无嵌入往返上限仅 ~18 dB**（60 epoch DDPM），注入后降到 ~9.5 dB，详见 NEXT_STEPS.md §2。
+- **现行路线是 LDM 隐空间**（自训 VAE f=2：往返 51.5 dB；隐空间 DDPM：38 dB@S=150），
+  像素空间原型（往返上限 18.8 dB）仅作对照保留；两条路线的容量参数由 `fit_capacity`
+  按频点预算自动适配，评测由 `eval_setup` 自动匹配尺寸与配置。
+- 隐藏质量受 DDIM 往返重建误差与注入能量共同限制；`--strength` 控制隐秘性-鲁棒性折中，
+  当前质量-可解码互斥的机制分析与杠杆见 ITERATION_LOG.md §6/§8/§9。
 - ECC 目前是重复码 + 组内均值（软合并）；正式版可换 BCH/LDPC。
-- nonce 计数器是**公开参数**：攻击者知道 counter 时可复现图案，因此逐图 nonce 降低的是
-  "跨图累积优势"，不能当作密码学保证。
+- nonce 协议为 `H(key || counter)`，**自包含、不依赖 cover（盲提取）**；counter 是公开参数：
+  攻击者知道 counter 时可复现图案，因此逐图 nonce 降低的是"跨图累积优势"，
+  不能当作密码学保证。
 - LPIPS 需额外安装：`pip install lpips`（未安装时报告中标注 `n/a`，不会中断流水线）。

@@ -17,7 +17,8 @@ from .pattern import ecc_collapse, ecc_encode, inject_pattern, ring_features
 class TrajStego:
     def __init__(self, model, schedule, n_bits: int = 16, ecc_reps: int = 3,
                  bins_per_bit: int = 2, res: int = 32, n_check_bits: int = 32,
-                 inject_mode: str = "replace", device="cpu"):
+                 inject_mode: str = "replace", r_max: int | None = None,
+                 device="cpu"):
         self.model = model.to(device).eval()
         for p in self.model.parameters():
             p.requires_grad_(False)
@@ -26,6 +27,7 @@ class TrajStego:
         self.ecc = ecc_reps
         self.bpb = bins_per_bit
         self.res = res
+        self.r_max = r_max  # 环带外半径上限（None = 扩展到 Nyquist）；JPEG 鲁棒频段实验用
         self.n_check_bits = int(n_check_bits)
         # 注入模式：replace = 历史行为（覆盖系数，破坏性）；add = 加性（保留系数结构）
         self.inject_mode = inject_mode
@@ -40,7 +42,8 @@ class TrajStego:
     def params_for(self, key: str, nonce: str = "") -> dict:
         ck = (key, nonce)
         if ck not in self._params_cache:
-            p = pattern.key_params(key, self.n_pairs, self.res, nonce=nonce)
+            p = pattern.key_params(key, self.n_pairs, self.res, nonce=nonce,
+                                   r_max=self.r_max)
             self._params_cache[ck] = {
                 "bins": p["bins"].to(self.device),
                 "phases": p["phases"].to(self.device),

@@ -79,7 +79,8 @@ def main():
                        n_bits=_c.get("n_bits", 16), ecc_reps=_c.get("ecc", 3),
                        bins_per_bit=_c.get("bpb", 2),
                        n_check_bits=_c.get("n_check_bits", 32),
-                       inject_mode=args.inject_mode or _c.get("inject_mode", "replace"))
+                       inject_mode=args.inject_mode or _c.get("inject_mode", "replace"),
+                       r_max=_c.get("r_max"))
     io = StegoIO(stego, pixel_res=pixel_res)
     print(f"[space] {io.describe()} pixel_res={pixel_res}", flush=True)
     print(f"[capacity] {io.capacity_report(stego.total_embed_bits)}", flush=True)

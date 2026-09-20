@@ -39,27 +39,32 @@ def default_r_min(res: int) -> int:
     return max(1, min(3, res // 8))
 
 
-def ring_capacity(res: int, r_min: int | None = None) -> int:
+def ring_capacity(res: int, r_min: int | None = None, r_max: int | None = None) -> int:
     """给定分辨率下环带内**可用频点对**总数（单通道，不含通道维度）。
 
     LDM 迁移的容量核算依赖它：像素 32² 约 176 对；隐空间 8² 只有个位数，
     16² 约 30 对，64² 约 900+ 对 —— 这就是"频点预算 ∝ 分辨率²"的量化依据。
+    r_max 用于 JPEG 鲁棒频段实验（环带重定位，ITERATION_LOG.md §9.5）：
+    限制外半径可把图案从 JPEG 量化严重的中高频段移到低频段。
     """
     r_min = default_r_min(res) if r_min is None else int(r_min)
     r_max_cap = res // 2 - 1
+    if r_max is not None:
+        r_max_cap = min(int(r_max), r_max_cap)
     if r_max_cap < r_min:
         return 0
     return len(_halfplane_bins(res, r_min, r_max_cap))
 
 
 def key_params(key: str, n_pairs: int, res: int = 32, r_min: int | None = None,
-               nonce: str = "") -> dict:
+               nonce: str = "", r_max: int | None = None) -> dict:
     """由密钥(+nonce)确定性生成图案参数。n_pairs 为每图（单通道）写入的复数频点对数。
 
     nonce 用于逐图随机化图案位置：同一密钥在不同 nonce 下选择完全不同的频点/相位，
     使"多张同密钥载密图差分平均"的密钥恢复攻击失效（见 security.slot_detection_auc）。
 
     r_min=None 时按分辨率自适应（见 default_r_min），小分辨率下才不会退化为空环带。
+    r_max 限制环带外半径（None = 历史行为，扩展到 Nyquist 上限）。
     """
     assert n_pairs > 0 and res % 2 == 0
     r_min = default_r_min(res) if r_min is None else int(r_min)
@@ -69,6 +74,8 @@ def key_params(key: str, n_pairs: int, res: int = 32, r_min: int | None = None,
     rng = np.random.default_rng(seed)
 
     r_max_cap = res // 2 - 1  # 避开 Nyquist 行/列，保证镜像点唯一
+    if r_max is not None:
+        r_max_cap = min(int(r_max), r_max_cap)
     chosen = None
     for rm in range(r_min, r_max_cap + 1):
         if len(_halfplane_bins(res, r_min, rm)) >= n_pairs:
@@ -76,8 +83,8 @@ def key_params(key: str, n_pairs: int, res: int = 32, r_min: int | None = None,
             break
     if chosen is None:
         raise ValueError(
-            f"res={res} 的环带放不下 {n_pairs} 对频点（可用 {ring_capacity(res, r_min)} 对），"
-            f"请减小 n_pairs 或增大分辨率"
+            f"res={res} 的环带（r_max 上限 {r_max_cap}）放不下 {n_pairs} 对频点"
+            f"（可用 {ring_capacity(res, r_min, r_max)} 对），请减小 n_pairs 或放宽 r_max"
         )
 
     bins = _halfplane_bins(res, r_min, chosen)

@@ -154,47 +154,50 @@
 
 ## 5. 代码现状（本仓库）
 
-已实现并**通过冒烟测试**（`python tests/smoke_test.py`，20 项检查）。三大护栏（P1 安全 /
-P2 步数不对称 / P3 再生鲁棒性）的实验代码全部落地：
+> **当前主战场是 LDM 隐空间路线**（自训 VAE + 隐空间 DDPM）；像素空间原型保留作对照。
+> 迭代史、当前结果与判定点见 **ITERATION_LOG.md**（主日志）；v2 评测口径修正见 README。
 
 ```
 krd/
-  schedule.py     DDPM 调度 + DDIM 采样/反演（复原公式所在地）
-  unet.py         小型 U-Net（32², base=64, 注意力@8²/4²）
-  pattern.py      密钥(+nonce)→频点/相位/幅度；比特注入频谱；环带特征；ECC；校验比特
-  decoders.py     RingDecoder（MLP 解码头）
-  stego.py        TrajStego: hide(步数自由, nonce 逐图) / recover(固定步) / 潜变量缓存 / 再生攻击
-  security.py     P1: 错密钥BER分布 / matched-filter 密钥校验+FAR / 密钥空间下界 / 多图差分攻击AUC
-  distortions.py  可微 JPEG(直通) + 经典失真 + 调度坐标加噪(再生代理) + 随机失真
-  metrics.py      PSNR / SSIM / 比特准确率
+  schedule.py      DDPM 调度 + DDIM 采样/反演（"复原公式"）
+  unet.py          U-Net（像素/隐空间共用，in_ch 按空间自适应）
+  vae.py           VAE（native f=2 / SDVAE / Wrapper）—— LDM 迁移核心
+  latent.py        隐空间容量报告（fit_capacity 相关工具）
+  pattern.py       密钥(+nonce)→频点/相位/幅度；加性/覆盖式注入；去旋转环带特征；ECC；校验比特
+  decoders.py      RingDecoder（MLP 解码头）
+  stego.py         TrajStego: hide(inject_at 轨迹任意时刻注入) / recover / 再生攻击
+  security.py      错密钥BER分布 / matched-filter 校验 / 槽位定位AUC / 盲检测AUC / 残差一致性
+  distortions.py   可微 JPEG + 真实几何攻击（crop_fill/rotate/zoom/translate）+ 调度坐标加噪
+  perceptual.py    LPIPS（可选依赖）
+  metrics.py       PSNR / SSIM / 比特准确率
 scripts/
-  train_ddpm.py          阶段1: 预训练 DDPM（CIFAR-10, EMA）
-  train_decoder.py       阶段2: 失真感知训练解码器（含 --sched-noise-prob 再生代理、校验比特目标）
-  run_stego.py           单图隐藏/复原 CLI（nonce 写入 PNG 元数据随图传输）
-  eval_robustness.py     13 种攻击 + 再生 + 错密钥 全表
-  eval_key_security.py   P1: 安全表（BER 分布/FAR/AUC-N 曲线/密钥空间）
-  eval_steps_grid.py     P2: S_hide×S_rec 网格热图（步数不对称主实验）
-  eval_step_mismatch.py  P2: 复原步数失配鲁棒性曲线
-  eval_regen.py          P3: 再生攻击网格（攻击预算化: 同时报告攻击者 PSNR 代价）
-  plot_frontier.py       P3: 隐秘性-鲁棒性前沿（strength 扫描, 论文主图素材）
-tests/smoke_test.py        冒烟测试
+  train_vae.py / train_ddpm.py（像素与隐空间）/ train_decoder.py（含 fit_capacity 容量自适应）
+  run_pipeline.py  一键流水线（--ldm 隐空间模式，断点续跑）
+  eval_setup.py / eval_common.py   统一评测入口（像素↔隐空间桥接、nonce=H(key‖counter) 盲协议）
+  eval_ldm_pipeline.py / eval_strength_sweep.py   端到端工作点 / strength 扫描
+  eval_robustness / eval_key_security / eval_steps_grid / eval_step_mismatch / eval_regen / plot_frontier
+  verify_results.py 独立复核脚本（evaluation-only，全关键数字重验）
+  diag_*.py        机制诊断探针（往返上限/注入 A/B/t*/载荷）
+tests/             smoke_test + inject_at_test 回归
 ```
 
-**冒烟测试已验证的安全性质**（随机权重模型 + 精确注入）：
-- matched-filter 校验：真密钥距离 0/32，错密钥 17/32（≈二项分布均值 16）；
-- nonce 去相关：跨 nonce 图案残差相干度 0.130，同 nonce 0.505 —— 多图差分平均被破坏；
-- 带 nonce 的多图攻击 AUC = 0.497（≈0.5，攻击失败），密钥空间下界 log₂ ≈ 1354 bit。
+### 当前状态（2026-09-19）
 
-**实验发现（写论文时可用）**：原型容量下环带接近饱和（频点位置跨 nonce 重叠率 91%），
-但 nonce 同时随机化相位 → 跨图差分平均呈随机游走而非线性累积，攻击仍失效；
-迁移到 LDM 隐空间后位置重叠率也会大幅下降（频点空间 ∝ res²）。
+- **像素空间判定到头**：300 epoch 重训证实往返上限 18.8 dB（loss 已饱和）→ 弃用；
+- **LDM 迁移完成**：VAE 往返 51.5 dB，隐空间 DDPM 无嵌入往返 38 dB@S=150；
+  当前工作点 26 dB / dec clean 0.916（strength=0.3，bpb=4 + inject_at=0.35 解码器）；
+- **独立复核通过**：全部关键声明数字复现（端到端逐位一致）；发现 FAR@τ=12 不稳健、
+  n=8 抽样方差 ±0.05 两个稳健性问题（正式评测须 n≥64、引用 FAR@τ=8）；
+- **卡点**：质量-可解码互斥（35dB→~0.7，0.9+→26dB）。杠杆次序：载荷 16→8bit（进行中）
+  → 解码器收敛（mf 全面优于 MLP，loss 未到底）→ 软判决 ECC；
+- **创新点自评与选刊**：见 ITERATION_LOG.md §5（TIFS 主线 + IH&MMSec/WIFS 短文）。
 
 ### 下一步（按优先级）
 
-1. 正经训练：`train_ddpm.py --epochs 60` → `train_decoder.py`（默认 1000 步：探针实验
-   150 步即达 clean=1.000/jpeg50=0.998，1000 步留足余量；建议先跑
-   `--sched-noise-prob 0.3` 一组、`0` 一组做 P3 消融）；
-2. `eval_robustness.py` + `eval_key_security.py` + `eval_steps_grid.py` 出三张主表；
-3. 精读 MDDM (ICML 2025) 与 Training-Free Robust Generative Steganography，写差异化笔记；
-4. 迁移 Stable Diffusion 隐空间（pattern/stego/security 层与分辨率无关，可平移）；
-5. 补隐写分析安全实验（SRNet AUC）与 FID、LPIPS（攻击代价与前沿图用）。
+1. **8bit 载荷重训 + 容量曲线家族**（进行中）：4/8/16/32 bit 的容量–鲁棒性曲线，
+   替代单点容量主张（回应"容量太小"）；
+2. **解码器收敛**：加长训练/简化输出头，目标至少追平 matched-filter（s=0.3: 0.984 vs 0.916）；
+3. **大样本正式评测**（n≥64）：robustness/key_security/steps_grid/regen/frontier 全套主表；
+4. **基线同环境对比**：Tree-Ring / ZoDiac / MDDM 复现（回应 novelty 质疑，投稿前必须）；
+5. **规模升级**：256²/512²（换 ImageNet/COCO 子集）+ FID/LPIPS（先 `pip install lpips`）；
+6. **隐写分析安全**：SRNet/XuNet AUC 补 §E 盲检测。

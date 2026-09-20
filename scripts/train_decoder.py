@@ -40,7 +40,8 @@ def build_unet_from_args(margs: dict, device: str, check_compat: bool = False) -
     return unet
 
 
-def auto_bins_per_bit(res: int, n_slots: int, requested: int = 2) -> int:
+def auto_bins_per_bit(res: int, n_slots: int, requested: int = 2,
+                      r_max: int | None = None) -> int:
     """按空间的实际频点预算决定每槽占用多少对频点。
 
     容量 ∝ 分辨率²：像素 32² 单通道有 342 对，2 对/槽可放 160 对；
@@ -48,7 +49,7 @@ def auto_bins_per_bit(res: int, n_slots: int, requested: int = 2) -> int:
     这里从 requested 向下找到第一个放得下的值（至少 1）。
     """
     from krd.pattern import ring_capacity
-    avail = ring_capacity(res)
+    avail = ring_capacity(res, r_max=r_max)
     for bpb in range(requested, 0, -1):
         if n_slots * bpb <= avail:
             if bpb != requested:
@@ -59,16 +60,17 @@ def auto_bins_per_bit(res: int, n_slots: int, requested: int = 2) -> int:
 
 
 def fit_capacity(res: int, n_bits: int, ecc: int, n_check: int,
-                 requested_bpb: int = 2) -> tuple[int, int, int, int]:
+                 requested_bpb: int = 2, r_max: int | None = None) -> tuple[int, int, int, int]:
     """把 (n_bits, ecc, n_check, bpb) 调整到该分辨率的频点预算之内。
 
     优先保持 n_bits 与 ecc，先降 bpb；仍放不下则缩减 n_check，最后才降 n_bits。
     返回调整后的四元组，并在发生调整时打印说明。
     （隐空间 16×16 的预算只有 70 对，而默认配置需要 160 对，
       不做自适应会让评测脚本在没有解码器时直接崩掉。）
+    r_max 限制环带外半径（JPEG 鲁棒频段实验）：预算随 r_max 收窄。
     """
     from krd.pattern import ring_capacity
-    avail = ring_capacity(res)
+    avail = ring_capacity(res, r_max=r_max)
     bpb, check = requested_bpb, n_check
     bpb = min(bpb, max(1, avail // max(1, n_bits * ecc + check)))
     while n_bits * ecc + check > avail // max(bpb, 1) and check > 0:
@@ -86,7 +88,8 @@ def fit_capacity(res: int, n_bits: int, ecc: int, n_check: int,
 def load_stego(ckpt_path: str, device: str, n_bits: int = 16, ecc_reps: int = 3,
                bins_per_bit: int = 2, n_check_bits: int = 32,
                with_vae: bool = False, res: int | None = None,
-               inject_mode: str | None = None) -> TrajStego:
+               inject_mode: str | None = None,
+               r_max: int | None = None) -> TrajStego:
     """加载 DDPM（可选 VAE）并构造 TrajStego。
 
     with_vae=True 且 checkpoint 是隐空间模型时，会一并加载 VAE 并挂到
@@ -107,13 +110,13 @@ def load_stego(ckpt_path: str, device: str, n_bits: int = 16, ecc_reps: int = 3,
     # 优先级 = 显式参数 > checkpoint 的 latent_res > latent_shape 的 H > 32（像素空间）
     lshape = margs.get("latent_shape")
     _res = res or margs.get("latent_res") or (lshape[1] if lshape else 32)
-    # 频点预算不足时自适应（像素空间 res=32 预算充足，参数不变）
+    # 频点预算不足时自适应（像素空间 res=32 预算充足，参数不变）；r_max 收窄环带预算
     n_bits, ecc_reps, n_check_bits, bins_per_bit = fit_capacity(
-        int(_res), n_bits, ecc_reps, n_check_bits, bins_per_bit)
+        int(_res), n_bits, ecc_reps, n_check_bits, bins_per_bit, r_max=r_max)
     stego = TrajStego(unet, sched, n_bits=n_bits, ecc_reps=ecc_reps,
                       bins_per_bit=bins_per_bit, n_check_bits=n_check_bits,
                       res=int(_res), inject_mode=inject_mode or "replace",
-                      device=device)
+                      r_max=r_max, device=device)
     vae = None
     if with_vae:
         backend = margs.get("vae_backend", "none")
@@ -179,6 +182,10 @@ def main():
                     help="频谱注入方式：add = 加性（保留原系数，质量随 strength 平滑变化，"
                          "隐空间必备）；replace = 历史行为（覆盖系数，实测一加注入"
                          "PSNR 就从 35dB 掉到 15dB）")
+    ap.add_argument("--r-max", type=int, default=None,
+                    help="环带外半径上限（None = 扩展到 Nyquist）。JPEG 鲁棒频段实验："
+                         "降低 r_max 把图案移出 JPEG 量化严重的中高频段，"
+                         "代价是频点预算收缩（bpb 自动下调）。需与评测端 config 回填一致")
     ap.add_argument("--eval-size", type=int, default=128)
     ap.add_argument("--eval-every", type=int, default=500)
     ap.add_argument("--num-workers", type=int, default=-1,
@@ -197,7 +204,7 @@ def main():
     # with_vae=True 仅对隐空间 checkpoint 生效（像素空间 checkpoint 的 vae_backend=none）
     stego = load_stego(args.ddpm_ckpt, device, n_bits=args.n_bits, ecc_reps=args.ecc_reps,
                        bins_per_bit=args.bins_per_bit, n_check_bits=args.n_check_bits,
-                       with_vae=True, inject_mode=args.inject_mode)
+                       with_vae=True, inject_mode=args.inject_mode, r_max=args.r_max)
     if getattr(stego, "vae", None) is not None:
         print(f"[latent] 隐空间解码器训练: latent_shape={stego.latent_shape} "
               f"容量={stego.n_bits}bit ecc={stego.ecc} bpb={stego.bpb} "
@@ -290,7 +297,7 @@ def main():
               "n_pairs": stego.n_pairs, "hide_steps": args.hide_steps,
               "rec_steps": args.rec_steps, "nonce_protocol": "keyed-v2",
               "geom_prob": args.geom_prob, "inject_mode": args.inject_mode,
-              "inject_at": args.inject_at}
+              "inject_at": args.inject_at, "r_max": args.r_max}
     for step in range(1, args.steps + 1):
         try:
             x0, _ = next(it)

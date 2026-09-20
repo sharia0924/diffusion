@@ -1,0 +1,49 @@
+{
+  "space": "空间=隐空间 (4, 32, 32)，VAE=VAE[native] ch=4 down=2x (2^1) scale=1.00000 src=D:\\homework\\face recognition\\deeplearning\\diffusion\\checkpoints\\vae32.pt",
+  "n": 8,
+  "n_bits": 16,
+  "pixel_baseline": false,
+  "rows": [
+    {
+      "strength": 0.02,
+      "psnr": 38.805752055823746,
+      "ssim": 0.9798323512077332,
+      "lpips": null,
+      "dec_clean": 0.5078125,
+      "dec_jpeg50": 0.5234375,
+      "mf_clean": 0.5234375
+    },
+    {
+      "strength": 0.1,
+      "psnr": 36.81037634937798,
+      "ssim": 0.9674350023269653,
+      "lpips": null,
+      "dec_clean": 0.640625,
+      "dec_jpeg50": 0.640625,
+      "mf_clean": 0.6640625
+    },
+    {
+      "strength": 0.3,
+      "psnr": 28.097253100744936,
+      "ssim": 0.8653919696807861,
+      "lpips": null,
+      "dec_clean": 0.8828125,
+      "dec_jpeg50": 0.734375,
+      "mf_clean": 0.9296875
+    }
+  ],
+  "vae_roundtrip_psnr": 51.52840247330162,
+  "capacity": {
+    "z_shape": [
+      4,
+      32,
+      32
+    ],
+    "avail_bins_single_channel": 342,
+    "avail_pairs_all_channels": 1368,
+    "r_min": 3,
+    "r_max": 15,
+    "slots": 16,
+    "obs_per_bit_ceiling": 85.5
+  }
+}

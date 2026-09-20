@@ -92,7 +92,8 @@ def main():
                        n_bits=_cfg.get("n_bits", 16), ecc_reps=_cfg.get("ecc", 3),
                        bins_per_bit=_cfg.get("bpb", 2),
                        n_check_bits=_cfg.get("n_check_bits", 32),
-                       inject_mode=_cfg.get("inject_mode", "replace"))
+                       inject_mode=_cfg.get("inject_mode", "replace"),
+                       r_max=_cfg.get("r_max"))
     io = StegoIO(stego, pixel_res=pixel_res)
     print(f"[space] {io.describe()}  pixel_res={pixel_res}", flush=True)
 
