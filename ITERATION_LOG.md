@@ -496,15 +496,18 @@ python scripts/eval_strength_sweep.py --ddpm-ckpt checkpoints/ddpm_latent32.pt `
   （而在 VAE 往返的频谱均衡），触发 §6 路线转向评估。
 ---
 
-## 9. 多步注入（n_inject）实现与实测（2026-09-20）
+## 10. 多步注入（n_inject）实现与实测（2026-09-20）
 
-### 9.1 实现
+> 编号说明：本节与 §9 曾同为"9."（§9 是 P1 那一节，README 引用的也是那一节），
+> 现把本节改为 §10 以消除歧义。
+
+### 10.1 实现
 `TrajStego.hide(..., inject_at=frac, n_inject=n)`：在轨迹**下坡段**的 k 步里等距选 n 个时刻，
 每处注入一次相同图案。**不增加反演/采样步数**（仍是 k 步采样），计算开销与 n=1 相同。
 贯通：`train_decoder --n-inject`（内部按 `strength/n` 保持总能量守恒）→ decoder config
 → `eval_setup` → `StegoIO.n_inject` → 全部评测脚本自动继承。
 
-### 9.2 实测（latent 4×32×32, S=150, inject_at=0.35, n=8 图, matched-filter 接收）
+### 10.2 实测（latent 4×32×32, S=150, inject_at=0.35, n=8 图, matched-filter 接收）
 
 | 总能量 E | n=1 PSNR / mf | n=4 | n=8 |
 |---|---|---|---|
@@ -512,7 +515,7 @@ python scripts/eval_strength_sweep.py --ddpm-ckpt checkpoints/ddpm_latent32.pt `
 | 0.30 | 28.97 / 0.938 | 30.49 / 0.945 | **30.65 / 0.961** |
 | 0.40 | 25.39 / 0.992 | 27.51 / 0.992 | **27.73 / 0.992** |
 
-### 9.3 结论（含对上一轮预测的更正）
+### 10.3 结论（含对上一轮预测的更正）
 
 1. **准确率主要由总注入能量决定**，把同样的能量拆成 n 次注入**不会**显著提高准确率
    （E=0.2/0.4 时 mf 完全不变；E=0.3 时 +0.023）。
@@ -524,13 +527,67 @@ python scripts/eval_strength_sweep.py --ddpm-ckpt checkpoints/ddpm_latent32.pt `
    这比之前的 b8r13 前沿（s=0.3 → 27.7 dB / jpeg50 0.836）更好，
    但仍是 **30.65 dB，距 35 dB 还差 4.4 dB**。
 
-### 9.4 当前最优工作点（更新）
+### 10.4 当前最优工作点（更新）
 | 目标 | 配置 | PSNR | mf |
 |---|---|---|---|
 | mf ≈ 0.95 | 原有设计 + n_inject=8, E=0.3, inject_at=0.35 | **30.65 dB** | 0.961 |
 
-### 9.5 下一步
+### 10.5 下一步
 - 把 `n_inject=8` 与已有的 `r_max=13`、8bit 载荷组合，重训解码器（预期 PSNR 再 +1~2 dB）；
 - 若仍需 4 dB：**换更强的基础 DDPM**（当前 5.17M/100 epoch）是唯一剩下的结构性杠杆；
 - 或者按 P3 重新定位：以"鲁棒性优先"（30 dB + jpeg50≥0.9）作为卖点，
   把 PSNR 上限写入 limitation。
+
+---
+
+## 11. 三机制组合（8bit + r_max=13 + n_inject=8）与评测口径 bug 修复（2026-09-20）
+
+本轮的目标只有一个：把三个**各自独立验证有效**的机制叠到同一个解码器上——
+8bit 载荷（clean +0.064）、`r_max=13`（jpeg50 +0.059、PSNR +1.0 dB）、
+`n_inject=8`（同准确率 PSNR +0.5~2.1 dB）。三者作用在不同环节，理应可叠加。
+
+训练配置（`decoder_latent32_combo.pt`）：
+
+```
+--n-bits 8 --ecc-reps 3 --r-max 13 --inject-mode add --inject-at 0.35 --n-inject 8
+--strength-min 0.15 --strength-max 0.4 --sched-noise-prob 0.3 --geom-prob 0.25
+--hide-steps 150 --rec-steps 150 --steps 600 --batch-size 16
+```
+
+### 11.1 发现并修复了一个会"吞掉"全部多步注入收益的评测口径 bug
+
+组合模型训练的第一次 strength 扫描结果与 `b8r13` 基线**逐位相同**
+（PSNR 27.10、mf 0.953、jpeg50 0.781），这本身是不可能的巧合，顺藤摸到两个叠加的错误：
+
+1. `train_decoder` 落盘 decoder config 时**漏写 `n_inject`** → 评测端
+   `eval_setup` 回填成默认值 1，于是"用 8 次注入训出来的解码器"在评测时只注入 1 次；
+2. 修好回填后 PSNR 反而崩到 **6.02 dB**：`krd/stego.py` 的 `n_inject=n` 是把一次注入
+   拆成 n 次、每次 `strength/n`（**总能量守恒**），训练端自己除了 n，
+   而评测端 `StegoIO.hide` 把 `strength` 原样传下去，**总能量被放大 8 倍**。
+
+修复（commit `95d8b87`）：`StegoIO.hide` 明确把 `strength` 定义为**总注入能量**并按
+`n_inject` 均摊；`n_inject=1` 时与历史行为逐位一致（老 checkpoint 不受影响）；
+`train_decoder` 补写 `n_inject`。同时加了 `tests/strength_semantics_test.py`
+（假 stego 记录传参，不需要 GPU，覆盖均摊/总能量守恒/n=1 兼容/张量强度/显式覆盖五种情形）。
+
+修复后同口径对照（`scripts/check_ninject.py`，n=4, S=150, s=0.3）：
+
+| 解码器 | n_inject | bpb | r_max | 载密图 PSNR |
+|---|---|---|---|---|
+| `decoder_latent32_b8r13_best.pt` | 1 | 4 | 13 | 27.88 dB |
+| `decoder_latent32_combo_best.pt`（同参数 + n_inject=8） | 8 | 4 | 13 | **28.85 dB** |
+
+**+0.97 dB 是纯白拿的**（零额外计算），且这正是 §10 在 matched-filter 接收端测到的
+"多步注入 PSNR 增益"在**训练解码器端**的复现——两个独立口径互相印证。
+
+> 教训（已写进 `tests/strength_semantics_test.py` docstring）：这类"训练/评测口径漂移"
+> 的 bug 表现很隐蔽——**准确率看着正常，只有 PSNR 崩**，极易被误读成"这个机制没用"。
+> 凡是"训练端做了一次变换、评测端没做"的参数（`strength/n`、`inject_at`、`r_max`、
+> `hide_steps`），都必须有一条"训练与评测同源"的断言或回归测试兜底。
+> 顺带把同一类隐患的第三处也堵了（commit `c26e15f`）：`run_pipeline.py --ldm` 的
+> `latent_decoder` 阶段此前不传 `inject_at/n_inject/r_max`，会用默认值训出一个
+> **不是最好那个**的解码器，现在改成 CLI 贯通 + 打印工作点 + 写入 summary。
+
+### 11.2 组合模型评测（S=150, s=0.3, 8bit, bpb=4, r_max=13, inject_at=0.35, n_inject=8）
+
+（训练完成后补：strength 扫描 / 鲁棒性全表 / P1-P3 护栏）

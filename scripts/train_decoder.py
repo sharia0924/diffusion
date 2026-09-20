@@ -203,6 +203,11 @@ def main():
                          "降低 r_max 把图案移出 JPEG 量化严重的中高频段，"
                          "代价是频点预算收缩（bpb 自动下调）。需与评测端 config 回填一致")
     ap.add_argument("--eval-size", type=int, default=128)
+    ap.add_argument("--eval-strength", type=float, default=0.3,
+                    help="训练中 eval 用的**总注入能量**，也决定 _best.pt 的挑选口径。"
+                         "此前硬编码 1.0（不在训练区间 [strength-min, strength-max] 内），"
+                         "导致 _best.pt 是按一个不在工作点上的强度挑出来的；"
+                         "最终报数的工作点是 0.3，故默认改为 0.3（像素空间旧实验传 1.0 可复现）")
     ap.add_argument("--eval-every", type=int, default=500)
     ap.add_argument("--num-workers", type=int, default=-1,
                     help="DataLoader worker 数；-1 = 自动探测（受限沙箱下自动回退 0）")
@@ -297,7 +302,7 @@ def main():
         n = args.eval_size
         bits = torch.randint(0, 2, (n, stego.n_bits), device=device).float()
         keys = eval_keys
-        sg = hide_space(eval_x, bits, keys, args.hide_steps, 1.0, eval_nonces)
+        sg = hide_space(eval_x, bits, keys, args.hide_steps, args.eval_strength, eval_nonces)
         out = {}
         for name, atk in [("clean", "clean"), ("jpeg50", ("jpeg", 50)),
                           ("noise05", ("noise", 0.05))]:
@@ -317,7 +322,7 @@ def main():
               "rec_steps": args.rec_steps, "nonce_protocol": "keyed-v2",
               "geom_prob": args.geom_prob, "inject_mode": args.inject_mode,
               "inject_at": args.inject_at, "n_inject": args.n_inject,
-              "r_max": args.r_max}
+              "r_max": args.r_max, "eval_strength": args.eval_strength}
     for step in range(1, args.steps + 1):
         try:
             x0, _ = next(it)
@@ -379,7 +384,7 @@ def main():
                   flush=True)
         if step % args.eval_every == 0 or step == args.steps:
             res = evaluate()
-            print(f"[eval] step {step} " +
+            print(f"[eval] step {step} E={args.eval_strength:.2f} " +
                   " ".join(f"{k}={v:.3f}" for k, v in res.items()), flush=True)
             os.makedirs(os.path.dirname(args.out), exist_ok=True)
             torch.save({"decoder": decoder.state_dict(), "config": config}, args.out)

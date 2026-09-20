@@ -338,6 +338,9 @@ def main():
                     help="多步注入次数；零额外计算，同准确率下 PSNR 更高")
     ap.add_argument("--r-max", type=int, default=13,
                     help="环带外径上限（把载波搬到低频以抗 JPEG）；0 = 关闭")
+    ap.add_argument("--eval-strength", type=float, default=0.3,
+                    help="训练中 eval 的总注入能量（也是 _best.pt 的挑选口径）；"
+                         "必须落在 [latent-strength-min, latent-strength-max] 内")
 
     # 各评测专属网格
     ap.add_argument("--grid-hide-list", default="10,25,50,100")
@@ -611,6 +614,7 @@ def main():
                        "--geom-prob", str(args.geom_prob),
                        "--hide-steps", str(args.hide_steps),
                        "--rec-steps", str(args.rec_steps),
+                       "--eval-strength", str(args.eval_strength),
                        "--eval-every", "250"] + lat_workpoint
                       + (["--tiny"] if args.tiny else []),
                       done_marker=lat_dec)
