@@ -1,36 +1,36 @@
 {
-  "vae_ckpt": "checkpoints/vae16.last.pt",
-  "ddpm_ckpt": "checkpoints/ddpm_latent.pt",
+  "vae_ckpt": "checkpoints/vae64.pt",
+  "ddpm_ckpt": "checkpoints/ddpm_latent64.pt",
   "n": 16,
   "latent_shape": [
     4,
-    16,
-    16
+    64,
+    64
   ],
-  "vae_roundtrip_psnr": 37.33521756861244,
-  "vae_roundtrip_ssim": 0.988257110118866,
+  "vae_roundtrip_psnr": 32.637440966352315,
+  "vae_roundtrip_ssim": 0.9717458486557007,
   "ddim_rows": [
     {
       "steps": 20,
-      "roundtrip_psnr": 29.70976046311142,
-      "roundtrip_ssim": 0.8988634347915649,
-      "latent_rel_mse": 0.021224732792477326,
-      "latent_psnr": 21.64314031600952
+      "roundtrip_psnr": 19.401427181501106,
+      "roundtrip_ssim": 0.7093474268913269,
+      "latent_rel_mse": 0.5298877089021647,
+      "latent_psnr": 6.666412949562073
     },
     {
       "steps": 50,
-      "roundtrip_psnr": 35.12261252781373,
-      "roundtrip_ssim": 0.9661061763763428,
-      "latent_rel_mse": 0.002847395895376637,
-      "latent_psnr": 30.36708354949951
+      "roundtrip_psnr": 28.576089025227162,
+      "roundtrip_ssim": 0.9198621511459351,
+      "latent_rel_mse": 0.050681478125649576,
+      "latent_psnr": 16.859757900238037
     },
     {
       "steps": 100,
-      "roundtrip_psnr": 36.67832097739742,
-      "roundtrip_ssim": 0.9812406301498413,
-      "latent_rel_mse": 0.0007004422042675635,
-      "latent_psnr": 36.457839012145996
+      "roundtrip_psnr": 32.23731559442345,
+      "roundtrip_ssim": 0.9619905352592468,
+      "latent_rel_mse": 0.009449354147897,
+      "latent_psnr": 24.154229164123535
     }
   ],
-  "gap_db": 0.6568965912150233
+  "gap_db": 0.40012537192886555
 }

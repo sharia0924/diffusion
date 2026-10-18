@@ -1,0 +1,36 @@
+{
+  "vae_ckpt": "checkpoints/vae64.pt",
+  "ddpm_ckpt": "checkpoints/ddpm_latent64.pt",
+  "n": 16,
+  "latent_shape": [
+    4,
+    64,
+    64
+  ],
+  "vae_roundtrip_psnr": 32.637440966352315,
+  "vae_roundtrip_ssim": 0.9717458486557007,
+  "ddim_rows": [
+    {
+      "steps": 150,
+      "roundtrip_psnr": 32.83595532136884,
+      "roundtrip_ssim": 0.9696454405784607,
+      "latent_rel_mse": 0.003505347302460049,
+      "latent_psnr": 28.460941314697266
+    },
+    {
+      "steps": 200,
+      "roundtrip_psnr": 32.91776587850051,
+      "roundtrip_ssim": 0.9718310236930847,
+      "latent_rel_mse": 0.001673540516558913,
+      "latent_psnr": 31.671888828277588
+    },
+    {
+      "steps": 250,
+      "roundtrip_psnr": 32.89471211010016,
+      "roundtrip_ssim": 0.9725240468978882,
+      "latent_rel_mse": 0.0009351979826536772,
+      "latent_psnr": 34.19921636581421
+    }
+  ],
+  "gap_db": -0.28032491214819544
+}

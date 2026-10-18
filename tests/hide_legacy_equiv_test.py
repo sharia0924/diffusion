@@ -54,19 +54,40 @@ def main():
     bits = torch.randint(0, 2, (args.n, s.n_bits)).float()
     z = io.to_space(covers)
 
+    # 1) 老写法等价性：**关闭深度符号对齐**再比。
+    #    （对齐是刻意改变浅注入的符号，见 krd/stego.py 的注释与 ITERATION_LOG；
+    #      它只影响"距 cover ≤ invert_band 步"的注入，深注入仍与老写法逐位一致。）
+    s.depth_sign_align = False
     for ia in (1.0, 0.5, 0.35):
         a = legacy_hide(s, z, bits, keys, nonces, args.steps, args.strength, inject_at=ia)
         b = s.hide(z, bits, keys, args.steps, args.strength, nonces=nonces,
                    inject_at=ia, n_inject=1)
         d = float((a - b).abs().max())
         rel = d / float(a.abs().max().clamp(min=1e-9))
-        print(f"inject_at={ia}: max|Δ|={d:.3e} 相对={rel:.2e} "
+        print(f"[对齐 OFF] inject_at={ia}: max|Δ|={d:.3e} 相对={rel:.2e} "
               f"{'一致' if rel < 1e-5 else '不一致 ← 新老数字不可比'}")
-        if ia == 1.0:
-            assert rel < 1e-5, (
-                "hide(n_inject=1, inject_at=1.0) 与老写法不一致：注入时刻的语义被改了，"
-                "所有以老写法测量的历史数字都需要重测或标注")
-    print("hide 老写法等价性测试通过 [OK]")
+        assert rel < 1e-5, (
+            "hide(n_inject=1) 与老写法不一致：注入时刻的语义被改了，"
+            "所有以老写法测量的历史数字都需要重测或标注")
+
+    # 2) 深度符号对齐的行为：翻转条件只看"距 cover 的反演步数 k = round(steps·inject_at)"
+    #    是否 ≤ invert_band，与 S 无关（所以这里用 k 推期望，而不是写死 inject_at）。
+    s.depth_sign_align = True
+    s.invert_band = 15
+    for ia in (1.0, 0.35, 0.10, 0.03):
+        k = max(1, min(int(round(args.steps * ia)), args.steps))
+        expect_flip = k <= s.invert_band
+        on = s.hide(z, bits, keys, args.steps, args.strength, nonces=nonces,
+                    inject_at=ia, n_inject=1)
+        s.depth_sign_align = False
+        base = s.hide(z, bits, keys, args.steps, args.strength, nonces=nonces,
+                      inject_at=ia, n_inject=1)
+        s.depth_sign_align = True
+        changed = float((on - base).abs().max()) > 1e-6
+        print(f"[对齐 ON ] inject_at={ia} (k={k} <= {s.invert_band}? {expect_flip}): "
+              f"与不对齐相比{'有差异(已翻号)' if changed else '完全相同'}")
+        assert changed == expect_flip, (ia, k, changed, expect_flip)
+    print("hide 老写法等价性 + 深度符号对齐行为测试通过 [OK]")
 
 
 if __name__ == "__main__":

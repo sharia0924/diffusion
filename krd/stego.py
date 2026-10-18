@@ -19,6 +19,7 @@ class TrajStego:
                  bins_per_bit: int = 2, res: int = 32, n_check_bits: int = 32,
                  inject_mode: str = "replace", r_max: int | None = None,
                  mag_profile: bool = False, sync: bool = False,
+                 depth_sign_align: bool = False, invert_band: int = 15,
                  device="cpu"):
         self.model = model.to(device).eval()
         for p in self.model.parameters():
@@ -36,6 +37,20 @@ class TrajStego:
         self.mag_profile = bool(mag_profile)
         # sync：接收端做几何对齐搜索（需要 mag_profile=True 才有可靠模板）
         self.sync = bool(sync)
+        # depth_sign_align：**默认关闭**。原设想是"浅注入会反号，翻转后能相长"
+        # （轨迹 Rake），但 A/B 实测把这个设想否掉了，见下表（res=32, 4bit/N=64,
+        # S=150, n_inject=8, inject_at=0.35, n=16，同批次同能量）：
+        #     align=OFF: clean d=+1.82 / jpeg50 0.922 (d=1.139) / jpeg75 1.000
+        #     align=ON : clean d=+1.05 / jpeg50 0.719 (d=0.634) / jpeg75 0.812
+        # 即翻转最浅的 2 个注入点会让总偏转掉 ≈43%（-4.8 dB），说明
+        # **8 个注入点本来就是同号相干的**，翻号等于把 2 份 Contribution 变成相消
+        # （8→4 份 ⇒ 理论上 -6 dB，实测 -4.3~-5.1 dB，吻合）。
+        # 之所以"单深度扫描"在 inject_at 很小时测到负偏转，是因为那里 k 很小、
+        # **采样步数不足**导致成像反相，并不是注入下标的传递函数——
+        # `timestep_seq(k)` 的刻度随 k 变化，下标 i 不能跨 k 比较。
+        # 结论：保留开关与测试（记录机制），但默认关闭。
+        self.depth_sign_align = bool(depth_sign_align)
+        self.invert_band = int(invert_band)
         self.msg_embed_bits = n_bits * ecc_reps            # ECC 展开后的消息槽位
         self.total_embed_bits = self.msg_embed_bits + self.n_check_bits
         self.n_pairs = self.total_embed_bits * bins_per_bit
@@ -134,14 +149,25 @@ class TrajStego:
         x = cover
         inj_set = set(idxs)
         # 沿升序把 cover 推到轨迹上：每到一个注入时刻就写一次图案
+        #
+        # **深度符号对齐（轨迹 Rake）**：注入点越浅，回流时会**反号**——实测
+        # （scripts 里 diag，S=150, E=0.3，4bit/N=64）单深度注入在 k≤11 时
+        # 读出偏转为负（k=4: −1.33，k=11: −1.01），k≈15 过零，k≥18 转正，
+        # 峰值在 k≈52（+1.62）。也就是说 `n_inject>1` 时最浅的那 1~2 次注入
+        # 原本是在**相消**而不是相加。翻转这些注入的符号，注入总能量/PSNR/
+        # 计算量完全不变，只是把"相消"变成"相加"（实测偏转 +20% ≈ +2 dB）。
+        # 接收端无感：读出仍是"槽位值的符号 = 比特"，只是信号更强。
+        # 阈值 `invert_band` 以"距 cover 的 DDIM 反演步数"计（= 注入下标 i+1），
+        # 是模型性质，换模型时用 diag 重标一次即可。
         for i in range(len(seq) - 1):
             t_cur = torch.full((B,), int(seq[i]), device=self.device, dtype=torch.long)
             t_next = torch.full((B,), int(seq[i + 1]), device=self.device, dtype=torch.long)
             x = self.sched.ddim_update(self.model, x, t_cur, t_next, eta=0.0)
             if i in inj_set:
+                sgn = -1.0 if (self.depth_sign_align and (i + 1) <= self.invert_band) else 1.0
                 x = torch.stack([
                     inject_pattern(x[j], bits_full[j], params[j],
-                                   float(strength[j]), mode=self.inject_mode,
+                                   float(strength[j]) * sgn, mode=self.inject_mode,
                                    use_mag_profile=self.mag_profile)
                     for j in range(B)
                 ])
