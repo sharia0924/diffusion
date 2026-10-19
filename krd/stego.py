@@ -103,8 +103,19 @@ class TrajStego:
     @torch.no_grad()
     def hide(self, cover: torch.Tensor, bits: torch.Tensor, keys,
              hide_steps: int = 50, strength=1.0, nonces=None,
-             inject_at: float | None = None, n_inject: int = 1) -> torch.Tensor:
+             inject_at: float | None = None, n_inject: int = 1,
+             edit_mask: torch.Tensor | None = None) -> torch.Tensor:
         """cover (B,C,H,W), bits (B,n_bits)∈{0,1}, keys: list[str] len B。
+
+        edit_mask：**局部化扩散编辑**（(H,W) bool，或 None = 全图）。
+          只保留被选中的潜变量块经过"反演→注入→重采样"的结果，其余位置回填原
+          潜变量（恒等）。采样误差能量 ∝ 编辑比例 f，因此地板可以从整幅重采样的
+          30.4 dB 抬到 ~f 分之一（+10log10(1/f)）；但接收到的相干信号也 ∝ f，
+          所以注入幅度要按 1/f 放大才能维持同样的判决性——两者的乘积决定最优 f：
+              E_tot(f) = f·E_rt + a²/f  ⇒  min = 2√(E_rt·a²)
+          即"局部化"能比整幅重采样高 10log10(E_rt / (2√(E_rt a²))) 的 dB。
+          块集应由密钥/nonce 派生（见 pattern.edit_mask_for），否则攻击者可
+          直接定位被编辑区域。
 
         nonces: list[str] len B；None 时逐图派生 nonce=H(key||i)（自包含协议）。
         strength: float 或 (B,) tensor，控制图案强度（隐秘性/容量的折中）。
@@ -172,9 +183,98 @@ class TrajStego:
                     for j in range(B)
                 ])
         # 从最深的注入时刻采样回 x_0（同一段轨迹，步数不变）
-        return self.sched.ddim_sample(self.model, x, k)
+        out = self.sched.ddim_sample(self.model, x, k)
+        if edit_mask is not None:
+            # 局部化：只有 mask 内的位置采用"扩散重采样"的结果，其余回填原潜变量
+            # 支持 (H,W) 共享掩码、(B,H,W) 逐样本掩码，以及 (B,1,H,W) 已广播形态
+            m = edit_mask.to(out.device)
+            if m.dtype != torch.bool:
+                m = m > 0.5
+            if m.dim() == 2:
+                m = m[None, None]
+            elif m.dim() == 3:
+                m = m[:, None]
+            out = torch.where(m, out, cover)
+        return out
 
-    # ---------- 复原端：步数固定，公式驱动 ----------
+    @torch.no_grad()
+    def hide_localized(self, cover: torch.Tensor, bits: torch.Tensor, keys,
+                       hide_steps: int = 50, strength=1.0, nonces=None,
+                       inject_at: float | None = None, n_inject: int = 1,
+                       edit_mask: torch.Tensor | None = None) -> torch.Tensor:
+        """**局部化扩散编辑**：RePaint 式掩码条件采样（正确的局部编辑方式）。
+
+        为什么不能用"最后再复合"（`hide(..., edit_mask=...)`）：解码器是空间耦合的，
+        把 5%~30% 的潜变量单元换成"另一次采样的结果"会在掩码边界造成不连续，
+        实测 f=0.05 时载密图只有 5.34 dB（见 results/localized.json）——那是
+        块间不连续而非能量问题。
+
+        正确做法（本函数）：在采样的**每一步**，把未编辑区域替换回 cover 的真实
+        前向轨迹值 x_t^known（RePaint 的 replacement 技巧）。于是
+          - 未编辑区在 t=0 与原 cover 逐位一致 → 不引入任何块间不连续；
+          - 只有掩码内是"模型合成"的内容，且与边界条件相容；
+          - 往返地板 ≈ VAE 往返（51 dB）与 f·E_rt 的合成，远高于整幅重采样。
+
+        信号代价：接收端在**全局环带**上相干累加，只有掩码内的部分携带图案，
+        因此信号 ∝ f；要保持判决性需把注入幅度按 1/f 放大（成本 a²/f），
+        最优 f = √(a²/E_rt)，最优误差 2√(E_rt·a²)（见 docs 与 diag_localized.py）。
+        """
+        B = cover.shape[0]
+        if not torch.is_tensor(strength):
+            strength = torch.full((B,), float(strength), device=self.device)
+        strength = strength.to(self.device).view(B)
+        nonces = self.resolve_nonces(nonces, B, keys=keys)
+
+        frac = 1.0 if inject_at is None else float(inject_at)
+        frac = min(max(frac, 1e-3), 1.0)
+        k = min(max(1, int(round(hide_steps * frac))), hide_steps)
+        seq = self.sched.timestep_seq(k)
+        n = max(1, int(n_inject))
+        if n == 1:
+            idxs = [len(seq) - 2]
+        else:
+            idxs = sorted({int(round((j + 1) * (len(seq) - 2) / n)) for j in range(n)})
+
+        params = [self.params_for(keys[i], nonces[i]) for i in range(B)]
+        bits_full = [self.full_bits(bits[i], keys[i], nonces[i]) for i in range(B)]
+
+        # 1) 前向（反演）把 cover 推到轨迹上，并记录每一步的已知状态
+        traj = [cover]
+        x = cover
+        total_steps = len(seq) - 1
+        for i in range(total_steps):
+            t_cur = torch.full((B,), int(seq[i]), device=self.device, dtype=torch.long)
+            t_next = torch.full((B,), int(seq[i + 1]), device=self.device, dtype=torch.long)
+            x = self.sched.ddim_update(self.model, x, t_cur, t_next, eta=0.0)
+            if i in set(idxs):
+                x = torch.stack([
+                    inject_pattern(x[j], bits_full[j], params[j],
+                                   float(strength[j]), mode=self.inject_mode,
+                                   use_mag_profile=self.mag_profile)
+                    for j in range(B)
+                ])
+            traj.append(x)                      # traj[i+1] 对应 t = seq[i+1]
+
+        # 2) 反向采样，每一步把未编辑区域替换回真实轨迹（RePaint replacement）
+        if edit_mask is not None:
+            m = edit_mask.to(self.device)
+            if m.dtype != torch.bool:
+                m = m > 0.5
+            if m.dim() == 2:
+                m = m[None, None]
+            elif m.dim() == 3:
+                m = m[:, None]
+        else:
+            m = None
+        x = traj[-1]
+        for i in reversed(range(total_steps)):
+            t_cur = torch.full((B,), int(seq[i + 1]), device=self.device, dtype=torch.long)
+            t_next = torch.full((B,), int(seq[i]), device=self.device, dtype=torch.long)
+            x = self.sched.ddim_update(self.model, x, t_cur, t_next, eta=0.0)
+            if m is not None:
+                x = torch.where(m, x, traj[i])
+        return x
+
 
     @torch.no_grad()
     def invert_latents(self, images: torch.Tensor, steps: int) -> torch.Tensor:

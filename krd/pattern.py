@@ -109,6 +109,35 @@ def key_params(key: str, n_pairs: int, res: int = 32, r_min: int | None = None,
     }
 
 
+def edit_mask_for(key: str, nonce: str, h: int, w: int, frac: float,
+                  block: int = 2) -> torch.Tensor:
+    """密钥派生的"局部化扩散编辑"块集：(h,w) 的 bool 掩码。
+
+    用途（见 krd/stego.py 的 hide(edit_mask=...)）：只让被选中的潜变量块经过
+    "反演→注入→重采样"，其余位置恒等回填。采样误差 ∝ 编辑比例 f，因此地板
+    可抬 10log10(1/f)；但接收端在**全局环带**上相干累加，信号也 ∝ f，所以注入
+    幅度需按 1/f 放大，最优 f = √(a²/E_rt)（E_tot = f·E_rt + a²/f 的最小点）。
+
+    掩码必须由密钥/nonce 派生：若块集固定或公开，攻击者可直接定位/擦除被编辑
+    区域，等于把同步问题送给对手。
+    """
+    assert 0.0 < frac <= 1.0
+    block = max(1, int(block))
+    bh, bw = h // block, w // block
+    nblk = bh * bw
+    nsel = max(1, int(round(frac * nblk)))
+    seed = int.from_bytes(
+        hashlib.sha256(f"krd-mask:{key}:{nonce}".encode("utf-8")).digest()[:8], "little"
+    )
+    rng = np.random.default_rng(seed)
+    sel = rng.permutation(nblk)[:nsel]
+    m = np.zeros((h, w), dtype=bool)
+    for t in sel:
+        r, c = divmod(int(t), bw)
+        m[r * block:(r + 1) * block, c * block:(c + 1) * block] = True
+    return torch.from_numpy(m)
+
+
 def check_bits(key: str, nonce: str, n: int = 32) -> torch.Tensor:
     """密钥校验比特：SHA256(key|nonce) 的前 n bit。
 
